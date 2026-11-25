@@ -356,9 +356,13 @@ private fun StateCard(
                 "负荷" to f2(s.load),
                 "想念" to f2(s.missing),
                 // 主动开口：**实时算一遍**（不发消息、不花钱）。
-                // 之前放在按钮里，点完只设 notice，调试页根本看不到 —— 等于没法验证。
+                // 只显示"0% 不说"会让人以为坏了 —— 把 reason 一起显示出来，
+                // 夜间硬门 / 冷却 / 被拒这些原因一眼就能看出来（用户 2026-11-25 就卡在这）。
                 "主动" to com.leaf.vixi.state.Proactive.decide(s, System.currentTimeMillis())
-                    .let { "${(it.score * 100).toInt()}% " + if (it.send) "会开口" else "不说" },
+                    .let { d ->
+                        "${(d.score * 100).toInt()}% " + (if (d.send) "会开口" else "不说") +
+                            if (d.reason.isBlank()) "" else " · " + d.reason.take(26)
+                    },
                 "混合" to com.leaf.vixi.state.EmotionMix.decode(s.emoMix)
                     .joinToString("+") { "${it.label.zh}${(it.w * 100).toInt()}" }
                     .ifBlank { "—" },

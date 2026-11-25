@@ -121,6 +121,12 @@ class PromptBuilder(
         silenceLines: String = "",
         correctionLines: String = "",
         /**
+         * 长期人物事实（【关于她的事实…】）。**放在 user 段最前面**：
+         * 它变化很慢、阅读顺序上属于"背景设定"，而且 system 是缓存前缀不能动。
+         * 空串 = 这个角色还没有事实，行为和以前一致。
+         */
+        factLines: String = "",
+        /**
          * 她可以做的两个动作（2026-11-25）：引用他刚说的一句 / 发一张图。
          *
          * 只在她确实做得到的时候才非空（贴纸目录里有图才给【可以发的图】）。
@@ -152,6 +158,9 @@ class PromptBuilder(
             if (isGroup) {
                 appendLine("【群成员】" + members.joinToString("、"))
             }
+            // 长期事实放在最前面：它是最稳定的背景（变化极慢），
+            // 也是整段里最该"先读到"的东西。放在【已读】之前不会打乱前缀稳定性。
+            if (factLines.isNotBlank()) appendLine(factLines)
             appendLine("【已读】")
             if (recent.isEmpty()) {
                 appendLine("（还没有聊过）")

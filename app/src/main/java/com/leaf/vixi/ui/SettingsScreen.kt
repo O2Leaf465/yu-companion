@@ -46,6 +46,7 @@ fun SettingsScreen(
     onOpenAvatar: () -> Unit,
     onOpenRules: () -> Unit,
     onOpenRecords: () -> Unit = {},
+    onOpenStickers: () -> Unit = {},
 ) {
     val settings = remember { App.instance.settings }
     val chatState by vm.state.collectAsStateWithLifecycle()
@@ -196,6 +197,27 @@ fun SettingsScreen(
                                 } else {
                                     "她的头像可上传；双击她的头像 = 摸摸头"
                                 },
+                                color = VixiPalette.muted,
+                                fontSize = 11.sp,
+                            )
+                        }
+                        Text("›", color = VixiPalette.muted, fontSize = 16.sp)
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(VixiPalette.her)
+                        .clickableNoIndication { onOpenStickers() }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("贴纸（她能发的图）", color = VixiPalette.text, fontSize = 14.sp)
+                            Text(
+                                text = "从相册加图 / 改名 / 删除；文件名就是她看到的图名",
                                 color = VixiPalette.muted,
                                 fontSize = 11.sp,
                             )

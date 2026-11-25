@@ -17,6 +17,7 @@ import java.io.File
  */
 class StickerStore(context: Context) {
 
+    private val ctx: Context = context
     private val stickersDir = File(context.filesDir, "stickers")
     private val imagesDir = File(context.filesDir, "images")
 
@@ -49,4 +50,52 @@ class StickerStore(context: Context) {
     }.getOrNull()
 
     fun dir(): File = stickersDir
+
+    /**
+     * 从相册加一张（2026-11-25 用户要求：贴纸库要能在界面上编辑，不能只靠 adb）。
+     *
+     * 统一压成 jpg、最长边 320px：贴纸在聊天里最大也就 180dp，
+     * 存原图只是白占空间（而且复制进 images 时还要再来一份）。
+     */
+    fun addFromUri(uri: android.net.Uri, displayName: String? = null): String? = runCatching {
+        val resolver = ctx.contentResolver
+        val name = baseName(displayName) ?: ("贴纸_" + System.currentTimeMillis() % 100000)
+        val bmp = resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
+            ?: return null
+        val longest = maxOf(bmp.width, bmp.height)
+        val scaled = if (longest > 320) {
+            val k = 320.0 / longest
+            android.graphics.Bitmap.createScaledBitmap(
+                bmp, (bmp.width * k).toInt().coerceAtLeast(1), (bmp.height * k).toInt().coerceAtLeast(1), true,
+            )
+        } else {
+            bmp
+        }
+        stickersDir.mkdirs()
+        val out = File(stickersDir, "$name.jpg")
+        out.outputStream().use { scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it) }
+        out.name
+    }.getOrNull()
+
+    fun delete(name: String): Boolean = runCatching {
+        File(stickersDir, name).takeIf { it.exists() }?.delete() ?: false
+    }.getOrDefault(false)
+
+    /** 改名 = 改她看到的图名（提示词里列的就是这个名字） */
+    fun rename(old: String, newName: String): Boolean = runCatching {
+        val base = baseName(newName) ?: return false
+        val src = File(stickersDir, old)
+        if (!src.exists()) return false
+        val ext = src.extension.ifBlank { "jpg" }
+        val dst = File(stickersDir, "$base.$ext")
+        if (dst.exists()) return false
+        src.renameTo(dst)
+    }.getOrDefault(false)
+
+    /** 文件名不许带路径分隔符/非法字符，长度限 12 个字（提示词里要列出全部名字） */
+    private fun baseName(raw: String?): String? {
+        val s = raw?.substringBeforeLast('.')?.trim() ?: return null
+        val cleaned = s.replace(Regex("[\\\\/:*?\"<>|\\s]"), "").take(12)
+        return cleaned.ifBlank { null }
+    }
 }

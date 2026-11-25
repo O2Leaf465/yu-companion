@@ -20,17 +20,19 @@ object HerActParser {
 
     private val QUOTE = Regex("\\[引用[:：]\\s*([^\\]]{1,80})]")
     private val IMAGE = Regex("\\[图[:：]\\s*([^\\]\\s]{1,80})]")
+    private val FACT = Regex("\\[记住[:：]\\s*([^\\]]{1,60})]")
 
     /** 只剥标签，不判断图片是否存在（那件事交给调用方：它才知道贴纸目录里有什么） */
     fun enrich(s: Spoken): Spoken {
         val q = QUOTE.find(s.text)?.groupValues?.get(1)?.trim()?.ifBlank { null }
         val img = IMAGE.find(s.text)?.groupValues?.get(1)?.trim()?.ifBlank { null }
-        if (q == null && img == null) return s
+        val fact = FACT.find(s.text)?.groupValues?.get(1)?.trim()?.ifBlank { null }
+        if (q == null && img == null && fact == null) return s
 
-        var cleaned = s.text.replace(QUOTE, "").replace(IMAGE, "").trim()
+        var cleaned = s.text.replace(QUOTE, "").replace(IMAGE, "").replace(FACT, "").trim()
         // 标签后面常跟一个标点，剥完会剩个孤零零的"，" —— 去掉
         cleaned = cleaned.trimStart('，', '。', '、', '：', ':', ' ').trim()
-        return s.copy(text = cleaned, quote = q, image = img)
+        return s.copy(text = cleaned, quote = q, image = img, fact = fact)
     }
 
     /** 整批处理（切条之后逐条剥） */

@@ -1,6 +1,7 @@
 package com.leaf.vixi.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -17,7 +19,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -106,6 +111,72 @@ fun SystemPromptScreen(
                     horizontalPadding = 4,
                     onClick = onEditRules,
                 )
+            }
+
+            // ── 人物事实（2026-11-25）──
+            // 这些不是 system 的一部分，而是**每轮拼在 user 段最前面**的长期设定。
+            // 放到这个页面是因为"人设在这里、事实在别处"最容易让人找不到。
+            run {
+                val factStore = remember { App.instance.facts }
+                var showFacts by remember { mutableStateOf(false) }
+                var tick by remember { mutableIntStateOf(0) }
+                val factsByMember = remember(tick, state.conversationId, members) {
+                    members.associate { it.id to factStore.list(it.id).map { f -> f.text } }
+                }
+                val total = factsByMember.values.sumOf { it.size }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextAction(
+                        label = if (showFacts) "人物事实（$total）▴" else "人物事实（$total）▾",
+                        color = VixiPalette.accent, fontSize = 11.sp, horizontalPadding = 4,
+                        onClick = { showFacts = !showFacts },
+                    )
+                    Text(
+                        text = "每轮都进提示词 · 由她在聊天里自己记",
+                        color = VixiPalette.muted, fontSize = 10.sp,
+                    )
+                }
+
+                if (showFacts) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .padding(horizontal = 12.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        if (total == 0) {
+                            Text(
+                                text = "还没有。聊到她的喜好/经历时，她会自己记一条。",
+                                color = VixiPalette.muted, fontSize = 10.5.sp,
+                            )
+                        }
+                        members.forEach { m ->
+                            (factsByMember[m.id] ?: emptyList()).forEach { text ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = (if (members.size > 1) "${m.name}：" else "· ") + text,
+                                        color = VixiPalette.text.copy(alpha = 0.85f),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextAction(
+                                        label = "✕", color = VixiPalette.danger,
+                                        fontSize = 12.sp, horizontalPadding = 6,
+                                        onClick = {
+                                            factStore.remove(m.id, text)
+                                            tick++
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Box(

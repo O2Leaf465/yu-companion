@@ -159,6 +159,14 @@ data class ChatUiState(
     val notice: String? = null,
     /** 测试环境：不记忆、不归档、不检索，用独立聊天文件 */
     val sandbox: Boolean = false,
+    /**
+     * 下一轮要不要让她联网（手动单轮开关，发完自动关）。
+     *
+     * 为什么不常开：联网走服务端工具 `deepseek_web_search`，官方要求
+     * **model 必须是 deepseek-flash 且服务端会忽略 temperature** ——
+     * 常开等于把人设温度扔掉，她会"变正经"。
+     */
+    val searchNext: Boolean = false,
     /** 当前会话：标题栏显示、切会话重载都看这三个 */
     val conversationId: String = "",
     val conversationTitle: String = "鱼",
@@ -687,9 +695,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 她能发的图（贴纸库，`files/stickers/`；空目录 = 这个能力不存在） */
-    val stickers: com.leaf.vixi.data.StickerStore by lazy {
-        com.leaf.vixi.data.StickerStore(App.instance)
-    }
+    val stickers: com.leaf.vixi.data.StickerStore get() = com.leaf.vixi.App.instance.stickers
 
     private fun refreshStateToUi() {
         val id = stateCharId() ?: return
@@ -1211,6 +1217,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      *   · 换成独立的 `chat_sandbox_<会话>.jsonl`，真实记录一行都不动
      *   · 不检索、不归档话题、不导出、不注入纠正记录
      */
+    /** 下一轮让她联网（发完自动关）。用的是服务端搜索工具，不额外调用。 */
+    fun toggleSearchNext() {
+        val next = !_state.value.searchNext
+        _state.update {
+            it.copy(
+                searchNext = next,
+                notice = if (next) "下一轮她会联网查一下（发完自动关）" else "下一轮不联网",
+            )
+        }
+    }
+
     fun toggleSandbox() {
         // 和切会话同样要挡：这一轮跑到一半换文件指针，回复会落进另一个文件、
         // 而且 pending.clear() 会把还没回的对话直接丢掉
@@ -1944,13 +1961,30 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // 注入文案（【想念】【想要什么】【说多少】）也按角色装一次：纯函数那边从静态表里取
         stateCharId()?.let { injectionTable.bind(it) }
 
-        // 她能做的两个动作：引用他刚说的一句 / 发一张贴纸。
-        // 引用总是允许；发图只有 `files/stickers/` 里有图时才注入（空目录 = 没这个能力）。
+        // 长期人物事实：按当前会话里的角色取（群聊每人一份，别串）
+        val factLines = runCatching {
+            com.leaf.vixi.App.instance.facts.block(
+                conv.memberIds,
+                { id -> membersOf(conv).firstOrNull { it.id == id }?.name ?: "她" },
+                conv.isGroup,
+            )
+        }.getOrDefault("")
+
+        // 她能做的两个动作：引用他刚说的一句 / 发一张贴纸 / 把稳定信息记成事实。
+        // 引用与记事实总是允许；发图只有 `files/stickers/` 里有图时才注入
+        //（空目录 = 没这个能力）。
         val stickerNames = runCatching { stickers.names() }.getOrDefault(emptyList())
         val actLines = buildString {
             appendLine(
-                "【可以引用】想指他刚说过的某一句，就在这条回复的**最前面**写 " +
-                    "[引用:那句原文的前几个字]，本地会把它折成引用条。没有想指的就不写。"
+                "【可以引用】**只在需要指回他刚说的某句具体内容时才用**（他答应过什么、" +
+                    "他说错了一句、他问的是你之前说过的某一小句）。" +
+                    "随便接话、打招呼、顺着聊都不要用；大多数回复里不该出现这个标签。" +
+                    "用法：在这条回复**最前面**写 [引用:那句原文的前几个字]。"
+            )
+            appendLine(
+                "【可以记住】聊到**关于你自己的稳定信息**（喜好、习惯、经历、生日、" +
+                    "怕的东西、家里的情况）时，在回复末尾写 [记住:喜欢草莓] 这种短句。" +
+                    "只写一句、不超过 20 字；临时情绪、当下发生的事、他的信息都**不要**记。"
             )
             if (stickerNames.isNotEmpty()) {
                 appendLine(
@@ -2050,6 +2084,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // 她能做的两个动作（引用他刚说的那句 / 发一张贴纸）：
             // 只有贴纸目录里有图时才给【可以发的图】；引用一直允许（她总要能指回某句）
             actLines = actLines,
+            factLines = factLines,
             needLines = needLines,
             // 群聊不注入：不想念"群"（也避免它成为群里唯一的状态行）
             missingLines = if (conv.isGroup) "" else com.leaf.vixi.state.Explain.missingLine(selfState),
@@ -2059,6 +2094,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         )
 
         val startedAt = SystemClock.elapsedRealtime()
+        // 联网是**单轮开关**：这一轮用掉就关（服务端工具会忽略 temperature，不该常开）
+        val doSearch = _state.value.searchNext
+        if (doSearch) _state.update { it.copy(searchNext = false) }
         var recallInfo = ""
         if (recallQuery.isNotBlank() && recallQuery != "旧检索（索引未就绪）") {
             recallInfo = "检索「${recallQuery.take(24)}」→ 命中 ${retrieved.size} 条"
@@ -2070,7 +2108,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // 而且那条记录的"查询"是诊断串 —— 既污染日志、又让每轮多一次全文件读写。
 
         val result: LlmResult = try {
-            kotlinx.coroutines.withTimeout(TURN_TIMEOUT_MS) { llm.chat(prompt) }
+            kotlinx.coroutines.withTimeout(TURN_TIMEOUT_MS) { llm.chat(prompt, webSearch = doSearch) }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             // 超时不能当成"用户取消"静默吞掉：气泡要标失败、要给重发入口
             val msg = "她想了太久（超过 " + (TURN_TIMEOUT_MS / 1000) + " 秒），这轮算超时"
@@ -2106,7 +2144,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         // 她这一句里可能夹带动作：`[引用:原文]` / `[图:文件名]`（本地剥，不额外调用）。
         // 剥完再往下走：气泡正文、通知、落库、索引都不该看到标签。
+        // 引用要**节流**：模型太爱引（用户 2026-11-25 反馈"用得太频繁"）。
+        // 最近 6 条里她已经引用过 → 这一轮直接丢掉引用（正文照旧），不用再问模型。
+        val quotedRecently = _state.value.bubbles.takeLast(6).any { b -> !b.self && b.quote != null }
         val acted: List<Spoken> = com.leaf.vixi.llm.HerActParser.enrichAll(spoken)
+            .map { if (quotedRecently) it.copy(quote = null) else it }
+
+        // 她这一轮带出的事实：记到**说那句话的人**头上（群聊里不能都记给会话创建者）
+        if (acted.any { it.fact != null }) {
+            val byName = membersOf(conv).associate { it.name to it.id }
+            val fallbackId = conv.memberIds.firstOrNull()
+            acted.forEach { s ->
+                val f = s.fact ?: return@forEach
+                val id = s.speaker?.let(byName::get) ?: fallbackId
+                if (id != null) {
+                    runCatching { com.leaf.vixi.App.instance.facts.add(id, f, conv.id) }
+                }
+            }
+        }
         // 通知里要能看出是谁说的（群里只写一句正文，会分不清哪个人）
         val idByName = membersOf(conv).associate { it.name to it.id }
         val replies = acted.map { s ->

@@ -136,6 +136,19 @@ fun ChatScreen(
         if (uris.isNotEmpty()) vm.addAttachments(uris)
     }
 
+    // 「进这个会话先落到最新一条」——每次换会话只做一次。
+    // 上一版只判断"现在在不在底部"，于是**刚从别的会话进来时永远不算在底部**，
+    // 停在历史中间不动（用户 2026-11-25 报的"自动跳最新失效"就是这个）。
+    var jumpedConv by remember { mutableStateOf("") }
+    LaunchedEffect(state.conversationId, state.bubbles.size) {
+        val count = state.bubbles.size + if (state.typing && !state.isGroup) 1 else 0
+        if (count <= 0) return@LaunchedEffect
+        if (jumpedConv != state.conversationId) {
+            jumpedConv = state.conversationId
+            listState.scrollToItem(count - 1)
+        }
+    }
+
     LaunchedEffect(state.bubbles.size, state.typing, state.isGroup) {
         // 群聊没有 typing 气泡，别把滚动位置算到一条不存在的 item 上
         val count = state.bubbles.size + if (state.typing && !state.isGroup) 1 else 0
@@ -268,6 +281,8 @@ fun ChatScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
+                searchNext = state.searchNext,
+                onToggleSearch = vm::toggleSearchNext,
                 quoting = state.quoting,
                 onCancelQuote = vm::cancelQuote,
                 pendingImages = state.pendingImages,
@@ -812,6 +827,9 @@ private fun InputBar(
     onFocus: () -> Unit,
     onSend: () -> Unit,
     onPickImage: () -> Unit,
+    /** 下一轮让她联网（单轮开关，发完自动关） */
+    searchNext: Boolean = false,
+    onToggleSearch: () -> Unit = {},
     quoting: Bubble?,
     onCancelQuote: () -> Unit,
     pendingImages: List<String>,
@@ -830,6 +848,23 @@ private fun InputBar(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (searchNext) VixiPalette.accent else VixiPalette.her)
+                    .clickableNoIndication { onToggleSearch() },
+                contentAlignment = Alignment.Center,
+            ) {
+                // 联网：亮起来 = 下一轮她会真的去查
+                Text(
+                    text = "🔍",
+                    fontSize = 16.sp,
+                    color = if (searchNext) VixiPalette.ink else VixiPalette.muted,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+
             Box(
                 modifier = Modifier
                     .size(38.dp)

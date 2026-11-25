@@ -12,11 +12,13 @@ object ReplySplitter {
     const val MAX_CHARS = 60
 
     /**
-     * 气泡数上限。**2026-11-23 用户要求取消 3 条的限制**：她一句一条地说话，
-     * 该发几条就发几条（模型那头仍然只调一次 API，切条是本地做的，不多花钱）。
-     * 用 `Int.MAX_VALUE` 表示不限。
+     * 气泡数上限。
+     *
+     * 2026-11-23 曾按用户要求取消上限（`Int.MAX_VALUE`），但 2026-11-25 真机上
+     * 出现"一条回复切成十几条、演出一分半"的体感问题 —— 每泡都要先"打字"再停一下。
+     * 现在**回到 5 条**，多的并进最后一条（绝不丢她说的话），单泡演出也同时压短了。
      */
-    const val MAX_BUBBLES = Int.MAX_VALUE
+    const val MAX_BUBBLES = 5
 
     private val bulletPrefix = Regex("""^\s*(?:[-*•·]|\d+[.、)]|\[\d+]|（\d+）)\s*""")
     private val markdownNoise = Regex("""(\*\*|__|`+|^#{1,6}\s*|^>\s*)""", RegexOption.MULTILINE)
@@ -76,11 +78,16 @@ object ReplySplitter {
         return out
     }
 
-    /** 演出节奏：短句快点、长句慢点，再加一点抖动，别像定时器 */
+    /**
+     * 演出节奏：短句快点、长句慢点，再加一点抖动，别像定时器。
+     *
+     * 2026-11-25 压短过一次：原来 `600 + 90×字 + 200~900`，一条 30 字的要 3.3~4.2 秒，
+     * 五条叠起来 20 秒的"挤牙膏"。现在 55ms/字、封顶 2.2 秒。
+     */
     fun typingDelayMillis(text: String): Long =
-        600L + text.length * 90L + (200..900).random()
+        (350L + text.length * 55L + (150..450).random()).coerceAtMost(2200L)
 
-    fun betweenBubblesMillis(): Long = (700L..1800L).random()
+    fun betweenBubblesMillis(): Long = (400L..1100L).random()
 
     private val CJK_PUNCT = charArrayOf(
         '。', '，', '！', '？', '、', '：', '；', '…', '—', '～', '「', '」', '“', '”', '（', '）'

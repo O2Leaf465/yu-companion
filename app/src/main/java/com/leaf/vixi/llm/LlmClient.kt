@@ -25,6 +25,18 @@ data class LlmResult(
     val completionTokens: Int,
     /** 接口返回的模型名（用来确认别名回落，例如 deepseek-chat → deepseek-flash） */
     val model: String,
+    /** 联网搜索用到的来源（没有搜索时为空） */
+    val sources: List<SearchSource> = emptyList(),
+    /** 这一轮模型**真的**联网搜了没有（服务端工具由模型自己决定要不要用） */
+    val searched: Boolean = false,
+)
+
+/** 联网搜索返回的一条来源（`server_tool_calls[].calls[].sources[]`） */
+data class SearchSource(
+    val title: String,
+    val url: String,
+    val snippet: String? = null,
+    val siteName: String? = null,
 )
 
 /**
@@ -44,9 +56,24 @@ class LlmClient(private val settings: SettingsStore) {
         .retryOnConnectionFailure(true)
         .build()
 
-    suspend fun chat(prompt: LlmPrompt): LlmResult = withContext(Dispatchers.IO) {
-        val first = call(prompt.user, prompt.system, prompt.maxTokens, prompt.images)
+    /**
+     * @param webSearch 这一轮要不要让她联网（**服务端工具**，不是第二次调用）。
+     *
+     * 官方口径（2026-11 文档）：
+     *  · 工具名 `deepseek_web_search`，必须 `model = deepseek-flash`
+     *  · 必须显式 `thinking:{type:disabled}`，否则会变成 deep search（最多 ~20 次工具调用，很慢）
+     *  · **不能强制**联网（`tool_choice` 指定它会 400），搜不搜由模型自己判断
+     *  · 声明该工具后，服务端会忽略 temperature/top_p 等采样参数
+     *  · 不单独计费，但搜索结果会进上下文按 token 算
+     */
+    suspend fun chat(prompt: LlmPrompt, webSearch: Boolean = false): LlmResult = withContext(Dispatchers.IO) {
+        val first = call(
+            prompt.user, prompt.system, prompt.maxTokens, prompt.images, webSearch = webSearch,
+        )
         if (first.text.isNotBlank()) return@withContext first
+
+        // 搜索路径不重试：命中 content_filter 时空 content 是审核拒绝，重试只会多花钱
+        if (webSearch) return@withContext first
 
         // 带图不重试：图片按视觉 token 计费，重试等于双份，而失败往往不是预算问题。
         if (prompt.images.isNotEmpty()) return@withContext first
@@ -114,14 +141,23 @@ class LlmClient(private val settings: SettingsStore) {
         maxTokens: Int,
         images: List<String> = emptyList(),
         temperature: Double = 1.1,
+        webSearch: Boolean = false,
     ): LlmResult {
         require(settings.isConfigured()) { "还没配置 API" }
 
         val payload = JSONObject().apply {
-            put("model", settings.model)
+            // 联网必须走 deepseek-flash（服务端工具的硬要求）；平常仍用设置里那个模型
+            put("model", if (webSearch) WEB_SEARCH_MODEL else settings.model)
             put("stream", false)
             put("max_tokens", maxTokens)
-            put("temperature", temperature)
+            if (webSearch) {
+                // thinking 默认是开的：不显式关掉会变成 deep search（最多约 20 次工具调用，非流式会等很久）
+                put("thinking", JSONObject().put("type", "disabled"))
+                put("tools", JSONArray().put(JSONObject().put("type", "deepseek_web_search")))
+                // 声明工具后服务端会忽略 temperature —— 所以联网是"手动单轮开关"，不常开
+            } else {
+                put("temperature", temperature)
+            }
             put(
                 "messages", JSONArray().apply {
                     put(JSONObject().put("role", "system").put("content", system))
@@ -154,7 +190,7 @@ class LlmClient(private val settings: SettingsStore) {
             .post(payload.toString().toRequestBody(JSON))
             .build()
 
-        val (code, raw) = httpExecute(request)
+        val (code, raw) = httpExecute(request, if (webSearch) 150L else 90L)
 
         if (code !in 200..299) {
             throw LlmException(
@@ -178,18 +214,50 @@ class LlmClient(private val settings: SettingsStore) {
         val choice = json.optJSONArray("choices")?.optJSONObject(0)
             ?: throw LlmException("响应里没有 choices")
 
-        val text = choice.optJSONObject("message")?.optString("content").orEmpty()
+        val msg = choice.optJSONObject("message")
+        val text = msg?.optString("content").orEmpty()
         val usage = json.optJSONObject("usage")
 
         val promptTokens = usage?.optInt("prompt_tokens") ?: 0
         val completionTokens = usage?.optInt("completion_tokens") ?: 0
         val billedModel = json.optString("model").ifBlank { settings.model }
 
+        // 联网搜索的结果**不在 content 里**，也不在 tool_calls 里：
+        //   · 来源：message.server_tool_calls[].calls[].sources[]
+        //   · 引用角标：message.annotations[]（type=url_citation）
+        // 这里只取来源（够用来在气泡下面显示"她查了哪几条"），角标不去重排文本。
+        var searched = false
+        val sources = ArrayList<SearchSource>()
+        msg?.optJSONArray("server_tool_calls")?.let { steps ->
+            for (i in 0 until steps.length()) {
+                val calls = steps.optJSONObject(i)?.optJSONArray("calls") ?: continue
+                for (j in 0 until calls.length()) {
+                    val c = calls.optJSONObject(j) ?: continue
+                    if (!c.optString("kind").contains("search")) continue
+                    searched = true
+                    val arr = c.optJSONArray("sources") ?: continue
+                    for (k in 0 until arr.length()) {
+                        val r = arr.optJSONObject(k) ?: continue
+                        val url = r.optString("url")
+                        if (url.isBlank()) continue
+                        sources += SearchSource(
+                            title = r.optString("title").ifBlank { url },
+                            url = url,
+                            snippet = r.optString("snippet").ifBlank { null },
+                            siteName = r.optString("site_name").ifBlank { null },
+                        )
+                    }
+                }
+            }
+        }
+
         return LlmResult(
             text = text,
             promptTokens = promptTokens,
             completionTokens = completionTokens,
             model = billedModel,
+            sources = sources.distinctBy { it.url }.take(5),
+            searched = searched,
         )
     }
 
@@ -201,9 +269,11 @@ class LlmClient(private val settings: SettingsStore) {
      * 100 秒那层兜底是装饰性的（真正生效的只有 OkHttp 的 callTimeout 90 秒）。
      * 接到 `call.cancel()` 上之后，取消才真的把连接掐掉。
      */
-    private suspend fun httpExecute(request: Request): Pair<Int, String> =
+    private suspend fun httpExecute(request: Request, timeoutSec: Long = 90): Pair<Int, String> =
         suspendCancellableCoroutine { cont ->
             val call = http.newCall(request)
+            // 联网那一轮会多一轮"搜索 + 作答"，90 秒偏紧；按调用覆盖单次超时
+            if (timeoutSec != 90L) runCatching { call.timeout().timeout(timeoutSec, TimeUnit.SECONDS) }
             cont.invokeOnCancellation { runCatching { call.cancel() } }
             call.enqueue(object : Callback {
                 override fun onFailure(c: Call, e: IOException) {
@@ -222,5 +292,12 @@ class LlmClient(private val settings: SettingsStore) {
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * 联网搜索必须用这个模型（官方服务端工具 `deepseek_web_search` 的硬要求，
+         * 2026-11 文档）。所以"联网"是**单轮开关**，不常开：
+         * 声明工具后服务端会忽略 temperature，人设的温度会丢。
+         */
+        const val WEB_SEARCH_MODEL = "deepseek-flash"
     }
 }

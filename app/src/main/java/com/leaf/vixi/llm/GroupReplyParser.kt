@@ -14,6 +14,8 @@ data class Spoken(
     val quote: String? = null,
     /** 要发的那张图（`files/stickers/` 下的文件名） */
     val image: String? = null,
+    /** 这一句里带出来的"关于她的长期事实"（`[记住:喜欢草莓]`），写进 FactStore */
+    val fact: String? = null,
 )
 
 /**

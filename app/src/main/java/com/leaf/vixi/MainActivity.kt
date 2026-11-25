@@ -22,6 +22,7 @@ import com.leaf.vixi.ui.PromptLogScreen
 import com.leaf.vixi.ui.RecordScreen
 import com.leaf.vixi.ui.RulesScreen
 import com.leaf.vixi.ui.SettingsScreen
+import com.leaf.vixi.ui.StickerScreen
 import com.leaf.vixi.ui.SystemPromptScreen
 import com.leaf.vixi.ui.VixiTheme
 
@@ -100,8 +101,10 @@ class MainActivity : ComponentActivity() {
                         onOpenAvatar = { go(Screen.Avatar) },
                         onOpenRules = { go(Screen.Rules) },
                         onOpenRecords = { go(Screen.Records) },
+                        onOpenStickers = { go(Screen.Stickers) },
                     )
                     Screen.Records -> RecordScreen(vm = vm, onBack = { back() })
+                    Screen.Stickers -> StickerScreen(onBack = { back() })
                     Screen.Debug -> DebugScreen(
                         vm = vm,
                         onBack = { back() },
@@ -128,7 +131,7 @@ class MainActivity : ComponentActivity() {
 
     private enum class Screen {
         Chat, Settings, Debug, Prompts, Persona, SystemPrompt, Rules, Avatar, Records,
-        Conversations, NewCharacter, NewGroup,
+        Conversations, NewCharacter, NewGroup, Stickers,
     }
 
     override fun onResume() {

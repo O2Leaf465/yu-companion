@@ -26,6 +26,15 @@ class App : Application() {
     lateinit var conversations: ConversationStore
         private set
 
+    /** 她能发的图（`files/stickers/`）；界面在 设置 → 贴纸 */
+    lateinit var stickers: com.leaf.vixi.data.StickerStore
+        private set
+
+    /** 长期人物事实（`files/facts_<角色id>.jsonl`）；界面在 设置 → 系统提示词 |
+        ——「人物事实」一节 */
+    lateinit var facts: com.leaf.vixi.data.FactStore
+        private set
+
     /** 是否在前台：决定她的回复要不要发通知 */
     @Volatile
     var isForeground: Boolean = false
@@ -38,6 +47,8 @@ class App : Application() {
         images = ImageStore(this)
         characters = CharacterStore(this)
         conversations = ConversationStore(this)
+        stickers = com.leaf.vixi.data.StickerStore(this)
+        facts = com.leaf.vixi.data.FactStore(this)
         runCatching { migrateSingleCharacter() }
         Notifier.ensureChannel(this)
     }

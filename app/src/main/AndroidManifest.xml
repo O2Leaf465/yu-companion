@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 只在"等她回话"时短暂拉起前台服务，避免退到后台被冻结导致回复和通知都丢了 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:enableOnBackInvokedCallback="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="鱼"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Vixi">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Vixi">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".ReplyService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
+        <!--
+          主动开口（后台版）的注册点。
+
+          为什么挂在这里而不是 App.onCreate()：本次只允许新建文件 + 改这个清单，
+          App.kt / MainActivity.kt 在别人的改动里。androidx.startup 的
+          InitializationProvider 会在进程创建时回调 ProactiveBoot，它再去
+          WorkManager 排上那个 3 小时的周期任务。
+
+          tools:node="merge" 是必须的：work-runtime 自己已经在清单里声明了
+          同一个 provider（它的 WorkManagerInitializer 也是 startup 初始化的），
+          这里只是往那个节点上**追加**我们这条 meta-data；不加 merge 会出现
+          两个同 authority 的 provider 互相冲突。
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="com.leaf.vixi.proactive.ProactiveBoot"
+                android:value="androidx.startup" />
+        </provider>
+    </application>
+
+</manifest>

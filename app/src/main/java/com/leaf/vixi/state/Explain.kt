@@ -245,8 +245,13 @@ object Explain {
         val loadFactor = 1.0 - 0.35 * s.load.coerceIn(0.0, 1.0)
         // 入心（S5）：表达强度旋钮（愿意聊 → 说更多）
         val learnMul = Growth.budgetMul(s)
-        val moodMult = maxOf(fatigue(s) * needFactor * shyFactor(s, now), MIN_EXPRESS_MULT) *
-            loadFactor * learnMul
+        // ⚠️ 联合下限必须包住**全部**乘子：以前只 maxOf 了前三个，
+        // load 0.9 + learn 0.8 时真实下限是 0.55×0.685×0.8 ≈ 0.30，
+        // "12 字 → HER_SHORT → 暗流涨 → 更短"那个回路在高负荷下根本没关上。
+        val moodMult = maxOf(
+            fatigue(s) * needFactor * shyFactor(s, now) * loadFactor * learnMul,
+            MIN_EXPRESS_MULT,
+        )
         return (raw * moodMult)
             .coerceIn(BUDGET_MIN.toDouble(), BUDGET_MAX.toDouble())
             .toInt()

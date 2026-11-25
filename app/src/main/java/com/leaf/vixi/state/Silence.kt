@@ -39,7 +39,8 @@ object Silence {
         val tired = (1.0 - s.energy).coerceIn(0.0, 1.0)
         val strained = s.load.coerceIn(0.0, 1.0)
         val hostile = s.conflict.coerceIn(0.0, 1.0)
-        val night = if (hour < 7 || hour >= 24) 0.35 else 0.0
+        // 深夜：0–6 点、23 点。⚠️ 原来写 hour >= 24，而 hourOf 只到 23 —— 永远不成立
+        val night = if (hour < 7 || hour >= 23) 0.35 else 0.0
 
         // 不想动的程度
         val away = (0.45 * tired + 0.35 * strained + 0.55 * hostile + night).coerceIn(0.0, 1.0)

@@ -256,7 +256,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val pendingBubbleIds = mutableListOf<Long>()
 
     /** 每个失败轮次各自记住自己那一批，避免多个失败互相串 */
-    private data class FailedTurn(val batch: List<Incoming>, val ids: List<Long>)
+    private data class FailedTurn(
+        val convId: String,
+        val batch: List<Incoming>,
+        // 气泡 id 在切会话后会按盘重建（新 id），所以这里必须可变：回来时要重新接上
+        var ids: List<Long>,
+    )
     private val failedTurns = mutableListOf<FailedTurn>()
 
     /** 已写进 turnLog 的消息时间戳：保证重发不会把同一条消息重复注入上下文 */
@@ -359,6 +364,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * @param replace true = 切会话（整体换掉气泡）
      *                false = 冷启动第一次装载（前置合并，避免启动那一瞬间刚发的消息被回放盖掉）
      */
+    /**
+     * 回到前台时对一次盘：**她主动开口**是后台 Worker 往同一份 `chat_<会话>.jsonl` 追加的，
+     * 而聊天页只在 init / 切会话 / 记录操作时读盘。
+     *
+     * 不重读的后果（用户 2026-11-25 审查发现）：她后台说了一句、通知也弹了，
+     * 点回 App 却看不到 → 下一轮 prompt 里也没有 → 她会重复或自相矛盾，
+     * 而导出归档里明明有。功能开着就每次必现。
+     *
+     * 只在"条数变了"时重载，且不动 pending / failedTurns / 话题游标。
+     */
+    fun reloadIfChanged() {
+        if (turnRunning || recordsOp || pending.isNotEmpty()) return
+        viewModelScope.launch {
+            val target = conv
+            val saved = withContext(io) { store.load() }
+            if (conv.id != target.id) return@launch
+            if (saved.size == turnLog.size) return@launch
+            turnLog.clear()
+            turnLog.addAll(0, saved.map { it.toTurn() })
+            loggedTs.addAll(saved.map { it.ts })
+            val loaded = saved.map { it.toBubble() }
+            _state.update { it.copy(bubbles = loaded) }
+        }
+    }
+
     private suspend fun loadConversation(target: Conversation, replace: Boolean) {
         conv = target
         conversations.currentId = target.id
@@ -379,7 +409,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         loggedTs.clear()
         pending.clear()
         pendingBubbleIds.clear()
-        failedTurns.clear()
+        // 失败重发入口要能跨"切会话"活下来：只清**别的会话**的失败记录。
+        // 以前无条件 clear，于是请求失败后切出去再回来，重发按钮就没了 ——
+        // 那条消息显示成"已发送"、她永远不回、也没有任何提示（弱网下很容易撞到）。
+        failedTurns.removeAll { it.convId != target.id }
         correctionsCache = emptyList()
         topicId = 0L
         topicStart = 0L
@@ -424,6 +457,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         refreshSelfStateFromIo()
+
+        // 回来之后把"失败的那一轮"重新接上重发入口：
+        // 气泡是从盘里重建的（状态一律 SENT、没有重发按钮），但失败的那批就是记录末尾这几条，
+        // 按原文对齐之后再把状态标回 FAILED，用户才点得到「重发」。
+        if (failedTurns.isNotEmpty()) {
+            val rebuilt = _state.value.bubbles
+            failedTurns.forEach { ft ->
+                val tail = rebuilt.takeLast(ft.batch.size)
+                if (tail.size == ft.batch.size && tail.map { it.text } == ft.batch.map { it.text }) {
+                    ft.ids = tail.map { it.id }
+                    markStatus(ft.ids, SendStatus.FAILED)
+                }
+            }
+        }
 
         // 老记录补索引（只在索引缺失时跑一次；不调模型、不生成摘要）
         withContext(io) {
@@ -928,6 +975,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** 重发失败的那一轮（按气泡 id 找自己那一批，多个失败不会互相串） */
     fun retryOne(bubbleId: Long) {
         val turn = failedTurns.firstOrNull { bubbleId in it.ids } ?: return
+        if (recordsOp) {
+            _state.update { it.copy(notice = "正在处理聊天记录，稍后再试") }
+            return
+        }
         failedTurns.remove(turn)
         markStatus(turn.ids, SendStatus.SENDING)
         pending += turn.batch
@@ -1274,6 +1325,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 落泡 + 落库 + 起一轮 */
     private fun enqueue(item: Incoming, quote: String? = null) {
+        // 记录页正在删/导/清时不许入队。门放在**这里**（唯一入口）而不是只放在 send()：
+        // 摸头、重发都绕过 send()，那几秒里进去的消息会在 loadConversation 的
+        // pending.clear() 里静默消失（气泡被清、也没有回复）。
+        if (recordsOp) {
+            _state.update { it.copy(notice = "正在处理聊天记录，稍后再试") }
+            return
+        }
         val msg = item.copy(quote = quote)
         val bubble = Bubble(
             id = nextId++,
@@ -1597,6 +1655,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         turnJob = viewModelScope.launch {
             try {
+                // 保活绑到**整个队列**，不是绑到一条回复：
+                // 原来是在拿到回复时 stop（见 runTurn 里那句），于是连发 A、B 时
+                // B 在没有前台服务的状态下裸跑，切出去就被系统冻住 —— "第二条发不出去"最后一处。
+                runCatching { com.leaf.vixi.ReplyService.start(App.instance) }
                 while (pending.isNotEmpty()) {
                     val batch = pending.toList()
                     pending.clear()
@@ -1608,7 +1670,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 turnRunning = false
                 _state.update { it.copy(typing = false) }
-                // 这一轮跑完了，前台服务可以收了
+                // 自愈：收尾那一瞬进来的消息会撞上 scheduleTurn() 开头的 `if (turnRunning) return`，
+                // 消息留在 pending 里而循环已经退出 —— 没人接手，那条永远不回。
+                // ⚠️ 必须放在 turnRunning = false **之后**，否则又被自己挡一次。
+                if (pending.isNotEmpty() && sendDebounceJob?.isActive != true) scheduleTurn()
+                // 队列真的空了，前台服务可以收了
                 runCatching { com.leaf.vixi.ReplyService.stop(App.instance) }
             }
         }
@@ -1807,21 +1873,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             ""
         }
-        // P5-1：这一轮说多少（同样只在单聊 + 开启时给；群聊人多，长度各人自带）
-        val lengthLine = if (!conv.isGroup && selfState.enabled) {
-            com.leaf.vixi.state.Explain.lengthLine(selfState)
-        } else {
-            ""
-        }
+        // 【说多少】【分寸】**不再单独传**：单聊的 mergedSelfLine 里已经带了这两段
+        // （Explain.mergedLine 自己 append 了【说多少】和 tactLine）。
+        // 两处来源口径不同 —— 合并层用 base×lengthMul，lengthLine 用不含乘子的 speakBudget ——
+        // 同一份 prompt 里会出现"很短，一两句就够"和"最多 28 字（日常两三句）"打架。
+        // PromptBuilder 的两个参数保留（群聊与单测用），生产单聊不再传。
         // P5-2：主动性与分寸（要不要主动开口 / 要不要翻旧事）
         val initiativeLine = if (!conv.isGroup && selfState.enabled) {
             com.leaf.vixi.state.Explain.initiativeLine(selfState)
-        } else {
-            ""
-        }
-        // P5-3：分寸（敢不敢示弱 / 撒娇 / 开玩笑）
-        val tactLine = if (!conv.isGroup && selfState.enabled) {
-            com.leaf.vixi.state.Explain.tactLine(selfState)
         } else {
             ""
         }
@@ -1911,10 +1970,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (silenceAct == com.leaf.vixi.state.Silence.Act.DELAY) {
-            // "晚点回"不该显示"正在输入"：先熄灯，等真开始写再亮
-            _state.update { it.copy(typing = false) }
-            delay(com.leaf.vixi.state.Silence.DELAY_SECONDS * 1000L)
-            _state.update { it.copy(typing = true) }
+            // **有排队消息时不拖**：连发三条时每轮都重抽一次"晚点回"，静默会叠成几分钟。
+            // 只有"下一句还没来"的时候才真的晚点。
+            if (pending.isEmpty()) {
+                // "晚点回"不该显示"正在输入"：先熄灯，等真开始写再亮。
+                // 但**必须给一句话** —— 15 秒黑屏和卡死在用户眼里是同一个东西。
+                _state.update {
+                    it.copy(
+                        typing = false,
+                        notice = "她晚点回（约 " + com.leaf.vixi.state.Silence.DELAY_SECONDS + " 秒）",
+                    )
+                }
+                delay(com.leaf.vixi.state.Silence.DELAY_SECONDS * 1000L)
+                _state.update { it.copy(typing = true) }
+            }
         }
 
         val prompt = builder.build(
@@ -1932,9 +2001,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // 抽身/改口：都只加一两行，不额外调用
             silenceLines = if (conv.isGroup) "" else com.leaf.vixi.state.Silence.line(silenceAct),
             correctionLines = if (conv.isGroup) "" else com.leaf.vixi.state.Explain.correctionLine(selfState),
-            lengthLine = lengthLine,
             initiativeLine = initiativeLine,
-            tactLine = tactLine,
             needLines = needLines,
             // 群聊不注入：不想念"群"（也避免它成为群里唯一的状态行）
             missingLines = if (conv.isGroup) "" else com.leaf.vixi.state.Explain.missingLine(selfState),
@@ -1998,8 +2065,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         runCatching {
             com.leaf.vixi.Notifier.notifyReply(App.instance, replies.firstOrNull().orEmpty(), conv.title)
         }
-        // 回复已经落地，保活可以立刻收掉（否则那条"等她回话"的通知会挂满 shortService 时限）
-        runCatching { com.leaf.vixi.ReplyService.stop(App.instance) }
+        // 保活**不在这里收**：队列里可能还有下一批（连发两条时第二条会裸跑）。
+        // 统一由 startTurnLoop 的 finally 收。
 
         spoken.forEachIndexed { index, line ->
             if (index > 0) delay(ReplySplitter.betweenBubblesMillis())
@@ -2108,8 +2175,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun failTurn(batch: List<Incoming>, ids: List<Long>) {
         markStatus(ids, SendStatus.FAILED)
         failedTurns.removeAll { t -> t.ids.any { it in ids } }
-        failedTurns += FailedTurn(batch, ids)
-        runCatching { com.leaf.vixi.ReplyService.stop(App.instance) }
+        failedTurns += FailedTurn(conv.id, batch, ids)
+        // 失败也不收保活：消息还在 pending 里，紧接着可能就自愈重跑一次
     }
 
     /** 轮次计数落盘（统计/节流用），不再做摘要 —— 旧事一律走检索原文 */

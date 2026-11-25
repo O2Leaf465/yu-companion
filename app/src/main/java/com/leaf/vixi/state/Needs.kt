@@ -128,8 +128,17 @@ object Needs {
         Level(Kind.RESPECT, respect(s)),
     )
 
-    /** 最想要的那个（≥ [HIGH] 才算；平手按 REST>TOUCH>BELONG>RESPECT 的顺序） */
+    /**
+     * 最想要的那个（≥ [HIGH] 才算；平手按 REST>TOUCH>BELONG>RESPECT 的顺序）。
+     *
+     * ⚠️ **不含 REST**：休息只缩长度、永不注入（用户定的），
+     * 让它参与竞争会把凌晨的"想被摸/想被尊重"整轮挤掉（rest = 1−体力，凌晨恒过线）。
+     */
     fun dominant(s: VixiState, now: Long = System.currentTimeMillis()): Level? =
+        levels(s, now).filter { it.value >= HIGH && it.kind != Kind.REST }.maxByOrNull { it.value }
+
+    /** 含 REST 的那个（只给调试页看："最想要"整体长什么样） */
+    fun dominantAll(s: VixiState, now: Long = System.currentTimeMillis()): Level? =
         levels(s, now).filter { it.value >= HIGH }.maxByOrNull { it.value }
 
     // ────────── 满足（都在事件层调用） ──────────

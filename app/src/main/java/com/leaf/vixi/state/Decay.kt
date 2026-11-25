@@ -81,6 +81,15 @@ object Decay {
     private const val RECOVERY_SHARE = 0.5
 
     /**
+     * 冲突高于这条线时，**修复量冻结不衰减**（等到裂痕降到 0.20 以下再开始消耗）。
+     *
+     * 为什么需要：repair 半衰 3h、conflict 半衰 24h，差 8 倍。
+     * 真吵架后道歉给 0.06，会让它在 conflict 还没跨过门槛前就掉到 0.02 以下，
+     * 于是"道歉"这条修复路径在真吵架时永远不生效（用户 2026-11-25 审查发现）。
+     */
+    private const val REPAIR_FREEZE_CONFLICT = 0.20
+
+    /**
      * 体力回归半衰期：**2 小时**。
      *
      * 以前是 6 小时、目标是常数 0.8，而没有任何事件改 energy
@@ -169,10 +178,19 @@ object Decay {
         // 以前写成 min(0.02, repair × dt/3h)，那个 0.02 是**每次结算**的上限 ——
         // 调试页每 2 秒结算一次，同一段时间里会被放大 14 倍（3 小时一次 +0.02，2 秒一次 +0.29）。
         // 现在 recovery 与衰减量成比例，分多少段结算结果都一样，而且不会和衰减重复扣。
-        val decays = state.repair * fr
         // 冲突先按时间降，再判断能不能回升信任：这样"吵完等一天"也是一条修复路径，
         // 不必非等到一句道歉。顺序反了的话，decay 永远不会让 conflict 跨过 0.20 那道线。
-        val conflictNow = r3(state.conflict * (1.0 - fc))
+        // ⚠️ 这里**不取三位**：conflict 半衰 24 小时，30 秒一轮的单步变化只有 2.4e-4，
+        // 取三位会把每步都抹成 0，而 lastTick 照旧推到 now —— 那段衰减永远补不回来。
+        val conflictNow = (state.conflict * (1.0 - fc)).coerceIn(0.0, 1.0)
+
+        // 修复量在"裂痕还没消"的时候**冻结**，不衰减。
+        //
+        // 为什么：repair 半衰 3 小时、conflict 半衰 24 小时，差 8 倍。
+        // 真吵一架（conflict 0.35）之后道歉拿到的 repair 0.06，
+        // 会在 conflict 降到 0.20 门槛之前就先掉到 0.02 以下 —— 修复量白白过期，
+        // "道歉"这条路径在真吵架时永远涨不了信任。冻结之后它会一直等到门开。
+        val decays = if (conflictNow >= REPAIR_FREEZE_CONFLICT) 0.0 else state.repair * fr
         val canRecover = state.repair > 0.02 && conflictNow < 0.20
         val recovery = if (canRecover) decays * RECOVERY_SHARE else 0.0
 
@@ -253,27 +271,30 @@ object Decay {
             knobs = knobsNow,
             // 混合情绪池跟着情绪一起淡
             emoMix = com.leaf.vixi.state.EmotionMix.decay(state.emoMix, dt),
-            p = r3(pNow.coerceIn(-1.0, 1.0)),
-            a = r3(aNow.coerceIn(0.0, 1.0)),
-            d = r3(dNow.coerceIn(0.0, 1.0)),
-            surgeP = r3(surgeP),
-            surgeA = r3(surgeA),
-            surgeD = r3(surgeD),
-            load = r3(loadNow),
-            missing = r3(missingNow),
-            energy = r3(state.energy + (energyTarget - state.energy) * fe),
+            // ⚠️ 这里**一律不取三位**。settle 是惰性结算：每次只算"上次到现在"这一段，
+            // 把变化量舍到 0.001 一档等于把这一段衰减直接丢掉（lastTick 仍然推到 now），
+            // 结算越频繁丢得越多 —— 调试页每 2 秒结算一次时会把慢变量彻底冻住。
+            // 需要"好看的数字"的地方（调试页、落盘）自己格式化，不靠状态本身凑整。
+            p = pNow.coerceIn(-1.0, 1.0),
+            a = aNow.coerceIn(0.0, 1.0),
+            d = dNow.coerceIn(0.0, 1.0),
+            surgeP = surgeP,
+            surgeA = surgeA,
+            surgeD = surgeD,
+            load = loadNow,
+            missing = missingNow,
+            energy = state.energy + (energyTarget - state.energy) * fe,
             // 心境朝**基线**回落（和 p 同一个基准，否则 baseP≠0 时两者会分叉）
-            mood = r3(state.baseP + (state.mood - state.baseP) * (1.0 - fm)),
-            repair = r3((state.repair - decays).coerceAtLeast(0.0)),
-            trust = r3((state.trust + recovery).coerceAtMost(1.0)),
+            mood = state.baseP + (state.mood - state.baseP) * (1.0 - fm),
+            repair = (state.repair - decays).coerceAtLeast(0.0),
+            trust = (state.trust + recovery).coerceAtMost(1.0),
             conflict = conflictNow,
             // 暗流朝 0 回落
-            backlog = r3((state.backlog * (1.0 - fb)).coerceAtLeast(0.0)),
-            needTouch = r3(touchNow),
-            needRespect = r3(respectNow),
+            backlog = (state.backlog * (1.0 - fb)).coerceAtLeast(0.0),
+            needTouch = touchNow,
+            needRespect = respectNow,
             lastTick = now,
         )
     }
 
-    private fun r3(v: Double): Double = (v * 1000).roundToLong() / 1000.0
 }

@@ -240,6 +240,12 @@ object Boundary {
                     val before = if (i > 0) text.substring(maxOf(0, i - 2), i) else ""
                     if (before.contains("我")) return@forEach
                 }
+                // 「给我的」不是命令（"你给我的感觉很温柔"）；「给我看看」才是。
+                // 不加这条，日常一句话就判成命令/重 0.65 → 落"反感"，亲近被磨到 0。
+                if (w == "给我") {
+                    val i = text.indexOf(w)
+                    if (i >= 0 && text.startsWith("的", i + 2)) return@forEach
+                }
                 val h = Hit(name, weight * far, tierName)
                 if (best == null || h.amount > best!!.amount) best = h
             }
@@ -247,7 +253,7 @@ object Boundary {
         return best
     }
 
-    private val COMMAND_SELF_SKIP = listOf("快点", "立刻", "马上", "赶紧")
+    private val COMMAND_SELF_SKIP = listOf("快点", "立刻", "马上", "赶紧", "必须", "不许")
 
     /** 命中且不是否定（同一小句里前面 2 个字有否定词就不算） */
     private fun hit(text: String, word: String): Boolean {

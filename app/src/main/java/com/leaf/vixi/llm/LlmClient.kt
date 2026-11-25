@@ -2,14 +2,20 @@ package com.leaf.vixi.llm
 
 import com.leaf.vixi.data.SettingsStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 class LlmException(message: String) : Exception(message)
 
@@ -102,7 +108,7 @@ class LlmClient(private val settings: SettingsStore) {
             .take(40)
     }
 
-    private fun call(
+    private suspend fun call(
         user: String,
         system: String,
         maxTokens: Int,
@@ -148,45 +154,71 @@ class LlmClient(private val settings: SettingsStore) {
             .post(payload.toString().toRequestBody(JSON))
             .build()
 
-        return http.newCall(request).execute().use { resp ->
-            val raw = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                throw LlmException(
-                    when (resp.code) {
-                        401, 403 -> "Key 不对或没权限（${resp.code}）"
-                        402 -> "余额不足（${resp.code}）"
-                        429 -> "请求太频繁（429）"
-                        in 500..599 -> "服务端出错（${resp.code}）"
-                        else -> "HTTP ${resp.code}：${raw.take(120)}"
-                    }
-                )
-            }
+        val (code, raw) = httpExecute(request)
 
-            val json = runCatching { JSONObject(raw) }
-                .getOrElse { throw LlmException("返回的不是 JSON：${raw.take(120)}") }
-
-            json.optJSONObject("error")?.let {
-                throw LlmException(it.optString("message", "接口报错"))
-            }
-
-            val choice = json.optJSONArray("choices")?.optJSONObject(0)
-                ?: throw LlmException("响应里没有 choices")
-
-            val text = choice.optJSONObject("message")?.optString("content").orEmpty()
-            val usage = json.optJSONObject("usage")
-
-            val promptTokens = usage?.optInt("prompt_tokens") ?: 0
-            val completionTokens = usage?.optInt("completion_tokens") ?: 0
-            val billedModel = json.optString("model").ifBlank { settings.model }
-
-            LlmResult(
-                text = text,
-                promptTokens = promptTokens,
-                completionTokens = completionTokens,
-                model = billedModel,
+        if (code !in 200..299) {
+            throw LlmException(
+                when (code) {
+                    401, 403 -> "Key 不对或没权限（$code）"
+                    402 -> "余额不足（$code）"
+                    429 -> "请求太频繁（429）"
+                    in 500..599 -> "服务端出错（$code）"
+                    else -> "HTTP $code：${raw.take(120)}"
+                }
             )
         }
+
+        val json = runCatching { JSONObject(raw) }
+            .getOrElse { throw LlmException("返回的不是 JSON：${raw.take(120)}") }
+
+        json.optJSONObject("error")?.let {
+            throw LlmException(it.optString("message", "接口报错"))
+        }
+
+        val choice = json.optJSONArray("choices")?.optJSONObject(0)
+            ?: throw LlmException("响应里没有 choices")
+
+        val text = choice.optJSONObject("message")?.optString("content").orEmpty()
+        val usage = json.optJSONObject("usage")
+
+        val promptTokens = usage?.optInt("prompt_tokens") ?: 0
+        val completionTokens = usage?.optInt("completion_tokens") ?: 0
+        val billedModel = json.optString("model").ifBlank { settings.model }
+
+        return LlmResult(
+            text = text,
+            promptTokens = promptTokens,
+            completionTokens = completionTokens,
+            model = billedModel,
+        )
     }
+
+    /**
+     * 发请求：**enqueue + 挂起**，不用 `execute()`。
+     *
+     * 为什么必须换：`execute()` 是阻塞调用，协程被取消时它照样跑完 ——
+     * 用户切会话/退出页面，请求还在跑还在计费，而且 `withTimeout` 抛不进去，
+     * 100 秒那层兜底是装饰性的（真正生效的只有 OkHttp 的 callTimeout 90 秒）。
+     * 接到 `call.cancel()` 上之后，取消才真的把连接掐掉。
+     */
+    private suspend fun httpExecute(request: Request): Pair<Int, String> =
+        suspendCancellableCoroutine { cont ->
+            val call = http.newCall(request)
+            cont.invokeOnCancellation { runCatching { call.cancel() } }
+            call.enqueue(object : Callback {
+                override fun onFailure(c: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWith(Result.failure(e))
+                }
+
+                override fun onResponse(c: Call, response: Response) {
+                    val pair = response.use {
+                        val raw = runCatching { it.body?.string().orEmpty() }.getOrDefault("")
+                        it.code to raw
+                    }
+                    if (cont.isActive) cont.resume(pair)
+                }
+            })
+        }
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()

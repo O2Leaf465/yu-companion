@@ -139,7 +139,16 @@ fun ChatScreen(
     LaunchedEffect(state.bubbles.size, state.typing, state.isGroup) {
         // 群聊没有 typing 气泡，别把滚动位置算到一条不存在的 item 上
         val count = state.bubbles.size + if (state.typing && !state.isGroup) 1 else 0
-        if (count > 0) listState.animateScrollToItem(count - 1)
+        if (count <= 0) return@LaunchedEffect
+        val info = listState.layoutInfo
+        if (info.totalItemsCount == 0) {
+            // 首次装载：直接落底（animate 会从第 0 条一路滑下来，很难看）
+            listState.scrollToItem(count - 1)
+        } else {
+            // 只有"本来就在底部"才跟着滚：往上翻历史时被新消息拽回底部是很烦的事
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            if (lastVisible >= info.totalItemsCount - 3) listState.animateScrollToItem(count - 1)
+        }
     }
 
     // 键盘弹起时把最新消息顶上来（否则键盘挡住下半屏，看到的还是旧位置）
@@ -838,13 +847,16 @@ private fun InputBar(
                     .weight(1f)
                     .clip(RoundedCornerShape(20.dp))
                     .background(VixiPalette.her)
-                    .padding(horizontal = 14.dp, vertical = 11.dp)
+                    // ⚠️ padding **不能放在这层 Box 上**：那 11dp 上下留白就不属于输入框了，
+                    // 手指点偏一点（胶囊 42dp 只有中间一行能点）就没反应 —— 全 App 最高频的控件。
+                    // 留白挪进占位符和 BasicTextField 自己身上。
             ) {
                 if (value.isEmpty()) {
                     Text(
                         text = if (pendingImages.isEmpty()) "发消息…" else "就着这些图说点什么（可不填）",
                         color = VixiPalette.muted,
                         fontSize = 15.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                     )
                 }
                 BasicTextField(
@@ -855,6 +867,7 @@ private fun InputBar(
                     maxLines = 4,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 11.dp)
                         // 只在"从没焦点变成有焦点"时通知一次：点开输入框=还要继续说
                         .onFocusChanged { st ->
                             if (st.isFocused && !wasFocused) onFocus()

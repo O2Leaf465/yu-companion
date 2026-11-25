@@ -377,9 +377,11 @@ object EventRules {
         // 摸头在关系还浅的时候**不是亲近，是越界**：亲近降、被尊重涨、而且不"解渴"。
         // 必须在选 raw 之前算出来，否则会被类型表覆盖。
         val badPat = type == StateEventType.PAT && state.closeness < Boundary.PAT_MIN_CLOSENESS
-        // 24 小时内已经被越界过几次（含这次之前的）：惩罚要递减，否则亲近会被磨到 0
+        // 24 小时内已经被**越界**过几次（含这次之前的）：惩罚要递减，否则亲近会被磨到 0。
+        // 只数 BOUNDARY：友好的摸头也记 PAT，混在一起数会让"24 小时摸 4 次"把真越界的
+        // 惩罚压到 1/16，等于越界没代价（badPat 现在也落 BOUNDARY，见下面的事件写入）
         val repeats = state.events.count {
-            (it.type == StateEventType.BOUNDARY.key || it.type == StateEventType.PAT.key) &&
+            it.type == StateEventType.BOUNDARY.key &&
                 (now - it.ts).coerceAtLeast(0) <= 24 * 3600_000L
         }
         val damp = Math.pow(0.5, repeats.coerceIn(0, 4).toDouble())
@@ -437,7 +439,7 @@ object EventRules {
         // ── 生物层·余温（S1）──
         // 一句话**全量**推进缓冲池，情绪池每一步只追 [INERTIA] 的比例：
         // "一句话只能推一点，剩下的靠时间"（他的原话）。
-        // 强刺激（|Δ效价| ≥ 0.45）再叠一个**对手过程**：先往回拉 15%，
+        // 强刺激（|Δ效价| ≥ OPPONENT_AT = 0.15）再叠一个**对手过程**：先往回拉 15%，
         // 这是"被骂完先懵一下，然后才反应过来"的那种迟滞。
         // 缄口：压下去的话不会消失，转成暗流（和"憋着"是同一个量）
         // 代价只在**回复真的落库之后**才付（note 带 "·付" 才算），
@@ -516,10 +518,12 @@ object EventRules {
             lastLabelAt = if (emotionLabel != null) now else state.lastLabelAt,
             events = (state.events + StateEvent(
                 ts = now,
-                type = type.key,
+                type = if (badPat) StateEventType.BOUNDARY.key else type.key,
                 // 需要的变化也写进 note，否则"尊重怎么涨的"在事件表里查不到
                 note = note.ifBlank { type.label } + needNote,
-                delta = describe(d),
+                // ⚠️ 必须是 dPadded：缄口的代价只加在 dPadded 上，
+                // 写 d 的话事件表里这条记录的 delta 是空的，账对不上（查不到那 +0.08）
+                delta = describe(dPadded),
             )).takeLast(VixiState.MAX_EVENTS),
         )
         return next

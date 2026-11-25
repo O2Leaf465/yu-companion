@@ -49,6 +49,20 @@ class MainActivity : ComponentActivity() {
 
                 BackHandler(enabled = stack.size > 1) { back() }
 
+                // 回到前台时对一次盘：她**主动开口**时是后台 Worker 往同一份
+                // chat_<会话>.jsonl 追加的，而聊天页只在 init/切会话时读盘 ——
+                // 不重读的话，那条消息在界面上根本不存在（但导出/归档里有）。
+                val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            vm.reloadIfChanged()
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+                }
+
                 when (screen) {
                     Screen.Chat -> ChatScreen(
                         vm = vm,

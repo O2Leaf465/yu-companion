@@ -119,12 +119,23 @@ class MoodTest {
     }
 
     @Test
-    fun `修复量也会自己衰减`() {
+    fun `裂痕还在的时候修复量冻结不衰减`() {
+        // conflict 0.5 半衰 24h，经过 3h（= repair 一个半衰）后仍 ≈0.46，远高于 0.20 门槛
+        // → 修复量必须**冻着**，否则真吵架时道歉拿到的修复会先过期、永远涨不了信任
         val s = Decay.settle(
             VixiState(enabled = true, repair = 0.8, conflict = 0.5, lastTick = 1000L),
             now = 1000L + Decay.REPAIR_HALF_LIFE_MS,
         )
-        assertEquals(0.4, s.repair, 0.02)
+        assertEquals("裂痕没消之前不能耗掉修复量", 0.8, s.repair, 0.02)
+    }
+
+    @Test
+    fun `裂痕消了之后修复量照常衰减`() {
+        val s = Decay.settle(
+            VixiState(enabled = true, repair = 0.8, conflict = 0.1, lastTick = 1000L),
+            now = 1000L + Decay.REPAIR_HALF_LIFE_MS,
+        )
+        assertEquals("门开了就按 3h 半衰耗掉一半", 0.4, s.repair, 0.02)
     }
 
     // ────────── 注入 ──────────

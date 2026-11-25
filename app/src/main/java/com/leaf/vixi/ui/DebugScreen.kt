@@ -54,6 +54,8 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
     val state by vm.state.collectAsStateWithLifecycle()
     // 注入标签直接在调试页改（用户要求）
     var showInjection by remember { mutableStateOf(false) }
+    // 【想念】【想要什么】【说多少】这些文案单独一个弹窗（用户 2026-11-25 要求可改）
+    var showInjectionText by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     var editing by remember { mutableStateOf(false) }
     var showRaw by remember { mutableStateOf(false) }
@@ -112,6 +114,7 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
                 ) {
                     ToolChip("请求记录", VixiPalette.accent, onOpenPrompts)
                     ToolChip("注入标签", VixiPalette.accent) { showInjection = true }
+                    ToolChip("注入文案", VixiPalette.accent) { showInjectionText = true }
                     ToolChip("主动测试", VixiPalette.accent) { vm.proactiveTest() }
 
                     if (showInjection) {
@@ -122,6 +125,24 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
                             onSave = { text -> charId?.let { vm.reactionTable.save(it, text) } },
                             onReset = { charId?.let { vm.reactionTable.reset(it) } },
                             onClose = { showInjection = false },
+                        )
+                    }
+                    if (showInjectionText) {
+                        // 【想念】【想要什么】【说多少】这些文案（用户 2026-11-25 要求可改）
+                        val charId = vm.stateCharIdPublic()
+                        InjectionDialog(
+                            initial = charId?.let { vm.injectionTable.raw(it) } ?: "",
+                            title = "注入文案（想念 / 想要什么 / 说多少）",
+                            hint = "一行一个：键=文案。删掉某行就回默认。\n" +
+                                "可用键：missing.mild · missing.strong · need.touch.close · " +
+                                "need.touch.mild · need.belong · need.respect.warm · " +
+                                "need.respect.cold · length.short · length.normal · length.long",
+                            onSave = { text ->
+                                charId?.let { vm.injectionTable.save(it, text) }
+                                vm.injectionTable.bind(charId)
+                            },
+                            onReset = { charId?.let { vm.injectionTable.reset(it) } },
+                            onClose = { showInjectionText = false },
                         )
                     }
                     ToolChip(

@@ -99,14 +99,36 @@ class MemoryIndex(context: Context) {
     private val base = File(context.filesDir, "mem")
     private var file: File? = null
 
+    // ── 解析缓存（2026-11-25：修"发消息延迟高"）──
+    //
+    // 每轮检索都要 `read()` 一整份索引（真机 2224 条 / 494KB）。
+    // 解析结果只取决于文件内容，所以按 (长度, 修改时间) 缓存；
+    // append 之后**增量追加**到缓存，不必等下一轮整份重解析。
+    private data class Cached(val len: Long, val mtime: Long, val list: List<IndexEntry>)
+    private var cache: Cached? = null
+    private var cachePath: String? = null
+
+    private fun invalidate() {
+        cache = null
+        cachePath = null
+    }
+
     fun open(conversationId: String) {
         base.mkdirs()
-        file = File(base, "index_${sanitize(conversationId)}.jsonl")
+        val f = File(base, "index_${sanitize(conversationId)}.jsonl")
+        if (f.absolutePath != file?.absolutePath) invalidate()
+        file = f
     }
 
     fun append(entry: IndexEntry) {
         val f = file ?: return
-        runCatching { f.appendText(encode(entry).toString() + "\n", Charsets.UTF_8) }
+        runCatching {
+            f.appendText(encode(entry).toString() + "\n", Charsets.UTF_8)
+            val c = cache
+            if (c != null && cachePath == f.absolutePath) {
+                cache = c.copy(len = f.length(), mtime = f.lastModified(), list = c.list + entry)
+            }
+        }
     }
 
     /**
@@ -127,17 +149,25 @@ class MemoryIndex(context: Context) {
                     e == null || e.ts != ts
                 }
             f.writeText(keep.joinToString("") { it + "\n" }, Charsets.UTF_8)
+            invalidate()
         }
     }
 
     fun read(): List<IndexEntry> {
         val f = file ?: return emptyList()
         if (!f.exists()) return emptyList()
-        return runCatching {
+        val path = f.absolutePath
+        val len = f.length()
+        val mtime = f.lastModified()
+        cache?.let { if (cachePath == path && it.len == len && it.mtime == mtime) return it.list }
+        val parsed = runCatching {
             f.readLines(Charsets.UTF_8)
                 .filter { it.isNotBlank() }
                 .mapNotNull { line -> runCatching { decode(JSONObject(line)) }.getOrNull() }
         }.getOrDefault(emptyList())
+        cache = Cached(len, mtime, parsed)
+        cachePath = path
+        return parsed
     }
 
     /** 提取抑制：这次没被选中的相似条目，先压住（7 天半衰） */
@@ -236,6 +266,7 @@ class MemoryIndex(context: Context) {
                 .sortedBy { it.second.ts }
                 .map { it.first.toString() }
             f.writeText(keep.joinToString("\n") + "\n", Charsets.UTF_8)
+            invalidate()
         }
     }
     /** 每段的召回次数（他的"复习"）：单独存一个小 json，不改写 jsonl */

@@ -105,10 +105,11 @@ object Explain {
      */
     fun missingLine(s: VixiState): String {
         if (!s.enabled || s.missing < 0.50) return ""
+        // 文案可改（调试页 →「注入文案」）。没写就用内置默认，和以前逐字一致
         return if (s.missing >= 0.85) {
-            "【想念】好几天没好好说话了：可以先问一句他这些天怎么样，别一上来就埋怨。"
+            com.leaf.vixi.data.InjectionTable.text("missing.strong")
         } else {
-            "【想念】有点想他：可以顺口提一句「好久没见」，别撒娇过头。"
+            com.leaf.vixi.data.InjectionTable.text("missing.mild")
         }
     }
 
@@ -171,11 +172,12 @@ object Explain {
         return buildString {
             appendLine(stateLine)
             if (!isVenting(s)) {
+                // 文案可改（调试页 →「注入文案」）；没写就用内置默认
                 appendLine(
                     when {
-                        budget <= BUDGET_TIGHT -> "【说多少】很短，一两句就够。"
-                        budget <= BUDGET_NORMAL -> "【说多少】两三句，别铺开。"
-                        else -> "【说多少】可以多说两句，但别写成一段。"
+                        budget <= BUDGET_TIGHT -> com.leaf.vixi.data.InjectionTable.text("length.short")
+                        budget <= BUDGET_NORMAL -> com.leaf.vixi.data.InjectionTable.text("length.normal")
+                        else -> com.leaf.vixi.data.InjectionTable.text("length.long")
                     },
                 )
             } else {

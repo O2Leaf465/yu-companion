@@ -1,7 +1,20 @@
 package com.leaf.vixi.llm
 
-/** 群聊里的一句话 + 说话人名字（null 只在整体兜底时出现，调用方负责补名字） */
-data class Spoken(val speaker: String?, val text: String)
+/**
+ * 群聊里的一句话 + 说话人名字（null 只在整体兜底时出现，调用方负责补名字）。
+ *
+ * `quote` / `image` 是她这一句里夹带的动作（2026-11-25 加：她也能引用、也能发图）：
+ * 模型按约定写 `[引用:原文]` / `[图:文件名]`，[HerActParser] 把它们剥出来。
+ * 两个都为空时行为和以前完全一样。
+ */
+data class Spoken(
+    val speaker: String?,
+    val text: String,
+    /** 引用的那句话（原文快照） */
+    val quote: String? = null,
+    /** 要发的那张图（`files/stickers/` 下的文件名） */
+    val image: String? = null,
+)
 
 /**
  * 群聊回复解析：把模型的一次返回切成「谁说的一句话」。

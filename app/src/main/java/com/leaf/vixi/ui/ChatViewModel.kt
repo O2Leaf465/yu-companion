@@ -681,6 +681,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         com.leaf.vixi.data.ReactionTable(App.instance)
     }
 
+    /** 注入文案表（【想念】【想要什么】【说多少】，每人设一份，可编辑） */
+    val injectionTable: com.leaf.vixi.data.InjectionTable by lazy {
+        com.leaf.vixi.data.InjectionTable(App.instance)
+    }
+
+    /** 她能发的图（贴纸库，`files/stickers/`；空目录 = 这个能力不存在） */
+    val stickers: com.leaf.vixi.data.StickerStore by lazy {
+        com.leaf.vixi.data.StickerStore(App.instance)
+    }
+
     private fun refreshStateToUi() {
         val id = stateCharId() ?: return
         _state.update {
@@ -1488,6 +1498,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             },
                         )
                     }
+                    // 被在意（N2）：**安抚的话真的能降"想要被在意"**，泼冷水会加。
+                    // 以前 `Needs.careSignal` 只被测试调用 → CARE 事件永不产生 →
+                    // "我在意你"在数值上等于没说；belong 只能靠冷落涨、靠 24 小时窗口滚掉，
+                    // 看起来就是"没有下降机制"（用户 2026-11-25 报）。
+                    when (com.leaf.vixi.state.Needs.careSignal(msg.text)) {
+                        1 -> batch += PendingEvent(StateEventType.CARE)
+                        -1 -> batch += PendingEvent(StateEventType.REBUFF)
+                    }
                     if (TopicStore.isClosing(msg.text)) batch += PendingEvent(StateEventType.LEAVE)
                 }
             }
@@ -1750,6 +1768,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val incomingText = batch.joinToString(" ") { it.text }
         val windowText = inTopic.joinToString(" ") { it.text }
         var recallQuery = ""
+        // 判定明细单独一个变量：以前和 recallQuery 共用，于是 `gate=0.57 …` 这种诊断串
+        // 被当成"查询"写进了 recall.log 和调试页（日志里一半是重复行、查不到真实查询）
+        var recallDiag = ""
         var retrieved: List<String> = emptyList()
         var recallRounds: List<String> = emptyList()
         var recallAugmented: List<String> = emptyList()
@@ -1802,7 +1823,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     speakerName = { m -> if (m.fromUser) "Leaf" else nameOf(m.speakerId) },
                 )
                 retrieved = res.lines
-                recallQuery = res.detail
+                recallQuery = incomingText
+                recallDiag = res.detail
                 recallRounds = listOf("gate=${String.format(java.util.Locale.US, "%.2f", res.gate)} ${res.mode.name}")
                 // 把判定明细与候选落盘：真机上"为什么没命中"只能靠这个复查
                 logRecall(incomingText, res.lines, res.detail, res.debug)
@@ -1851,7 +1873,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             )
                         })
                         val line = com.leaf.vixi.state.RecallActivation.summary(acts)
-                        recallQuery += " ｜ $line"
+                        recallDiag += " ｜ $line"
                         logRecall(
                             incomingText, emptyList(), line,
                             acts.map {
@@ -1919,6 +1941,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         // X1 合并层：状态 + 混合情绪 + 长度 由**一处**生成（消灭两行打架）
         stateCharId()?.let { reactionTable.bind(it) }
+        // 注入文案（【想念】【想要什么】【说多少】）也按角色装一次：纯函数那边从静态表里取
+        stateCharId()?.let { injectionTable.bind(it) }
+
+        // 她能做的两个动作：引用他刚说的一句 / 发一张贴纸。
+        // 引用总是允许；发图只有 `files/stickers/` 里有图时才注入（空目录 = 没这个能力）。
+        val stickerNames = runCatching { stickers.names() }.getOrDefault(emptyList())
+        val actLines = buildString {
+            appendLine(
+                "【可以引用】想指他刚说过的某一句，就在这条回复的**最前面**写 " +
+                    "[引用:那句原文的前几个字]，本地会把它折成引用条。没有想指的就不写。"
+            )
+            if (stickerNames.isNotEmpty()) {
+                appendLine(
+                    "【可以发的图】" + stickerNames.take(12).joinToString("、") +
+                        "（想发就单独占一行写 [图:文件名]，那一行不要再写别的话；不合适就不发）"
+                )
+            }
+        }.trim()
         val rendered = com.leaf.vixi.data.ReactionTable.Rendered::class.let {
             runCatching {
                 reactionTable.render(
@@ -2007,6 +2047,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             silenceLines = if (conv.isGroup) "" else com.leaf.vixi.state.Silence.line(silenceAct),
             correctionLines = if (conv.isGroup) "" else com.leaf.vixi.state.Explain.correctionLine(selfState),
             initiativeLine = initiativeLine,
+            // 她能做的两个动作（引用他刚说的那句 / 发一张贴纸）：
+            // 只有贴纸目录里有图时才给【可以发的图】；引用一直允许（她总要能指回某句）
+            actLines = actLines,
             needLines = needLines,
             // 群聊不注入：不想念"群"（也避免它成为群里唯一的状态行）
             missingLines = if (conv.isGroup) "" else com.leaf.vixi.state.Explain.missingLine(selfState),
@@ -2017,12 +2060,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         val startedAt = SystemClock.elapsedRealtime()
         var recallInfo = ""
-        if (retrieved.isNotEmpty()) {
-            recallInfo = "检索「$recallQuery」→ 命中 ${retrieved.size} 条"
+        if (recallQuery.isNotBlank() && recallQuery != "旧检索（索引未就绪）") {
+            recallInfo = "检索「${recallQuery.take(24)}」→ 命中 ${retrieved.size} 条"
         } else if (recallQuery.isNotBlank()) {
-            recallInfo = "检索「$recallQuery」→ 没命中（按无记忆回话）"
+            recallInfo = "旧检索（索引未就绪）→ 命中 ${retrieved.size} 条"
         }
-        logRecall(recallQuery, retrieved, detail = "旧检索路径")
+        // ⚠️ 这里**不再**写 recall.log：真正的日志在检索那一刻已经写过一次
+        //（带真实查询 + 判定明细 + 候选）。这里再写一遍会把 400 行窗口占掉一半，
+        // 而且那条记录的"查询"是诊断串 —— 既污染日志、又让每轮多一次全文件读写。
 
         val result: LlmResult = try {
             kotlinx.coroutines.withTimeout(TURN_TIMEOUT_MS) { llm.chat(prompt) }
@@ -2059,9 +2104,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             ReplySplitter.split(result.text).map { Spoken(null, it) }
         }
+        // 她这一句里可能夹带动作：`[引用:原文]` / `[图:文件名]`（本地剥，不额外调用）。
+        // 剥完再往下走：气泡正文、通知、落库、索引都不该看到标签。
+        val acted: List<Spoken> = com.leaf.vixi.llm.HerActParser.enrichAll(spoken)
         // 通知里要能看出是谁说的（群里只写一句正文，会分不清哪个人）
         val idByName = membersOf(conv).associate { it.name to it.id }
-        val replies = spoken.map { s ->
+        val replies = acted.map { s ->
             if (conv.isGroup && s.speaker != null) "${s.speaker}：${s.text}" else s.text
         }
 
@@ -2073,12 +2121,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // 保活**不在这里收**：队列里可能还有下一批（连发两条时第二条会裸跑）。
         // 统一由 startTurnLoop 的 finally 收。
 
-        spoken.forEachIndexed { index, line ->
+        acted.forEachIndexed { index, line ->
             if (index > 0) delay(ReplySplitter.betweenBubblesMillis())
             delay(ReplySplitter.typingDelayMillis(line.text))
             // 单聊也要写 speakerId：导出/归档靠它认人，否则换角色后整篇都标成「鱼」
             val speakerId = line.speaker?.let(idByName::get) ?: conv.memberIds.firstOrNull()
-            val bubble = Bubble(nextId++, self = false, text = line.text, speakerId = speakerId)
+            // 她要发图：把贴纸复制进 files/images（气泡、导出、删记录都只认那一条路径）
+            val imgName = line.image?.let { name ->
+                stickers.materialize(name, System.currentTimeMillis())
+            }
+            val bubble = Bubble(
+                id = nextId++,
+                self = false,
+                text = line.text,
+                speakerId = speakerId,
+                quote = line.quote,
+                kind = if (imgName != null) MsgKind.IMAGE else MsgKind.TEXT,
+                images = listOfNotNull(imgName),
+            )
             _state.update {
                 it.copy(typing = false, bubbles = it.bubbles + bubble)
             }
@@ -2087,7 +2147,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             topicCount += 1
             viewModelScope.launch(io) {
                 store.append(
-                    StoredMessage(fromUser = false, text = line.text, ts = bubble.ts, speakerId = speakerId)
+                    StoredMessage(
+                        fromUser = false,
+                        text = line.text,
+                        ts = bubble.ts,
+                        kind = bubble.kind,
+                        images = bubble.images,
+                        quote = line.quote,
+                        speakerId = speakerId,
+                    )
                 )
             }
             // 她说的话也进索引（重要度打九折：自我权重更低）

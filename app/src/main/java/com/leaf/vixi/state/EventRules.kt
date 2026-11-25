@@ -177,7 +177,12 @@ object EventRules {
         StateEventType.WITHHOLD_COST -> Delta()
     }
 
-    /** 她开口的事件：这些会刷新"最后听到她的时间"（冷落计时起点） */
+    /**
+     * 她开口的事件。
+     *
+     * ⚠️ 2026-11-25 起 `lastHeardAt` 不再按"她说话"刷新 —— 改成任何一方说话都刷新
+     * （见 `apply()` 里那行）。这个集合保留给"只看她的输出"的逻辑用。
+     */
     val HER_SPEAKING = setOf(
         StateEventType.HER_REPLY,
         StateEventType.HER_SHORT,
@@ -482,8 +487,12 @@ object EventRules {
             needTouch = r3(needTouch),
             needRespect = r3(needRespect),
             violation = r3(violation ?: state.violation),
-            // 她开口过就刷新"最后听到她"的时间：冷落判定按角色算，不按会话算
-            lastHeardAt = if (type in HER_SPEAKING) now else state.lastHeardAt,
+            // "最后听到有人说话"——**任何一方说话都算**（用户 2026-11-25 报的 bug）。
+            //
+            // 原来只在 `HER_SPEAKING` 时刷新，于是：你连着发消息、她回得慢（或者这轮抽到"不回"），
+            // 缺席时间照继续走 → 想念一路涨到 1.0，你越聊她越"想你"，看着就像没有下降机制。
+            // 语义上 `missing` 是"多久没听到人说话"，不是"她多久没开口"。
+            lastHeardAt = now,
             // 心境 = 效价的慢速滑动平均。**只在效价真的被推动时挪**：
             // 否则"你发消息/她回复"这些只改唤醒的事件也会推着底色走，
             // 一轮里三四条事件叠加，等于每轮追 30% 而不是 10%。

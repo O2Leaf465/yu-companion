@@ -28,10 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * 注入标签编辑（2026-11-25 用户要求：**调试页直接改**，不用跑去人设页）。
+ * 注入文案编辑弹窗（2026-11-25）。
  *
- * 编辑的就是 `files/emotion_map_<角色id>.txt`：情绪 → 动作，外加一行 `_模板=` 控制
- * 【此刻状态】那句话长什么样。保存后下一轮生效。
+ * 两个用途共用同一个弹窗，所以标题和格式提示必须由调用方给：
+ *  · 「注入标签」→ `files/emotion_map_<角色id>.txt`（情绪→动作 + `_模板=`）
+ *  · 「注入文案」→ `files/injection_<角色id>.txt`（【想念】【想要什么】【说多少】）
+ *
+ * 早先标题写死成"情绪反应表"，第二个入口点开来标题是错的（真机上验出来的）。
  */
 @Composable
 fun InjectionDialog(
@@ -39,17 +42,19 @@ fun InjectionDialog(
     onSave: (String) -> Unit,
     onReset: () -> Unit,
     onClose: () -> Unit,
+    title: String = "注入标签（情绪反应表）",
+    hint: String = "格式：主情绪>次情绪=动作|长度乘子\n" +
+        "注入那行的写法：_模板=【此刻状态】{main}{second}（{act}）。",
 ) {
     var text by remember { mutableStateOf(initial) }
 
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("注入标签（情绪反应表）", fontSize = 15.sp) },
+        title = { Text(title, fontSize = 15.sp) },
         text = {
             Column(Modifier.fillMaxWidth()) {
                 Text(
-                    text = "格式：主情绪>次情绪=动作|长度乘子\n" +
-                        "注入那行的写法：_模板=【此刻状态】{main}{second}（{act}）。",
+                    text = hint,
                     color = VixiPalette.muted,
                     fontSize = 10.5.sp,
                     lineHeight = 15.sp,

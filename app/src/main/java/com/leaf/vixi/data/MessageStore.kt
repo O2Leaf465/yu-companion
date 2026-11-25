@@ -85,9 +85,22 @@ class MessageStore(context: Context) {
         parse(File(dir, "chat_$conversationId.jsonl"))
     }
 
+    // ── 解析缓存（2026-11-25 加的：修"发消息延迟高"）──
+    //
+    // 每一轮都要解析一整份 jsonl（真机上 2224 条 / 219KB）：语料一次、导出/记录页再各一次。
+    // 解析结果只取决于文件内容，所以按 (长度, 修改时间) 缓存；append 之后**增量追加**到缓存，
+    // 不必等下一次整份重解析。文件被外部改动（导入/整份重写）时两个数字会对不上，自动失效。
+    private data class Cached(val len: Long, val mtime: Long, val list: List<StoredMessage>)
+
+    private val caches = HashMap<String, Cached>()
+
     private fun parse(f: File): List<StoredMessage> {
         if (!f.exists()) return emptyList()
-        return f.readLines(Charsets.UTF_8).mapNotNull { line ->
+        val path = f.absolutePath
+        val len = f.length()
+        val mtime = f.lastModified()
+        caches[path]?.let { if (it.len == len && it.mtime == mtime) return it.list }
+        val parsed = f.readLines(Charsets.UTF_8).mapNotNull { line ->
             runCatching {
                 val o = JSONObject(line)
                 val text = o.optString("text")
@@ -106,6 +119,13 @@ class MessageStore(context: Context) {
                 )
             }.getOrNull()
         }
+        caches[path] = Cached(len, mtime, parsed)
+        return parsed
+    }
+
+    /** 让某个文件的缓存立刻失效（整份重写/清空之后必须调） */
+    private fun invalidate(f: File) {
+        caches.remove(f.absolutePath)
     }
 
     private fun readImages(o: JSONObject): List<String> {
@@ -125,7 +145,13 @@ class MessageStore(context: Context) {
      */
     fun append(msg: StoredMessage): Boolean = synchronized(lock) {
         runCatching {
-            file.appendText(encode(msg).toString() + "\n", Charsets.UTF_8)
+            val f = file
+            f.appendText(encode(msg).toString() + "\n", Charsets.UTF_8)
+            // 增量更新缓存：下一轮就不用再解析整份了
+            caches[f.absolutePath]?.let { c ->
+                caches[f.absolutePath] =
+                    c.copy(len = f.length(), mtime = f.lastModified(), list = c.list + msg)
+            }
             true
         }.getOrDefault(false)
     }
@@ -155,6 +181,8 @@ class MessageStore(context: Context) {
                 tmp.copyTo(file, overwrite = true)
                 tmp.delete()
             }
+            // 内容整份变了：缓存必须作废（长度/时间戳也可能刚好撞上）
+            invalidate(file)
         }
     }
 
@@ -171,7 +199,10 @@ class MessageStore(context: Context) {
     }
 
     fun clear() {
-        synchronized(lock) { runCatching { file.delete() } }
+        synchronized(lock) {
+            runCatching { file.delete() }
+            invalidate(file)
+        }
     }
 
     private companion object {

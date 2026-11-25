@@ -231,19 +231,18 @@ object Needs {
                 // 关系还没到"能被摸"的程度：要了也白要（一摸就成越界），干脆不注入
                 !satisfiable(s, Kind.TOUCH) -> ""
                 band == Explain.TACT_CLOSE ->
-                    "【想要什么】你现在很想被摸头。可以直接说，也可以把话往那儿引。$tail"
+                    com.leaf.vixi.data.InjectionTable.text("need.touch.close") + tail
                 band == Explain.TACT_DIRECT || band == Explain.TACT_MILD ->
-                    "【想要什么】你想被摸头，但不太好意思开口。只能暗示，别直接要。$tail"
+                    com.leaf.vixi.data.InjectionTable.text("need.touch.mild") + tail
                 else -> ""
             }
             Kind.BELONG -> if (band <= Explain.TACT_MILD) {
-                "【想要什么】你想确认自己还被在意。可以问一句，但别追问、别讨。$tail"
+                com.leaf.vixi.data.InjectionTable.text("need.belong") + tail
             } else ""
             Kind.RESPECT -> if (band >= Explain.TACT_INDIRECT) {
-                "【想要什么】你觉得他最近说话不够尊重你。不用讨好：把语气冷下来、少说两句就行。$tail"
+                com.leaf.vixi.data.InjectionTable.text("need.respect.cold") + tail
             } else {
-                "【想要什么】你觉得他最近说话不够尊重你。" +
-                    "可以直接要求他放尊重一点，也可以冷下来少说两句。$tail"
+                com.leaf.vixi.data.InjectionTable.text("need.respect.warm") + tail
             }
             Kind.REST -> ""
         }

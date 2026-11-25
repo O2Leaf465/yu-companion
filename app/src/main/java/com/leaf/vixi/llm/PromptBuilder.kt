@@ -120,6 +120,13 @@ class PromptBuilder(
         moveLines: String = "",
         silenceLines: String = "",
         correctionLines: String = "",
+        /**
+         * 她可以做的两个动作（2026-11-25）：引用他刚说的一句 / 发一张图。
+         *
+         * 只在她确实做得到的时候才非空（贴纸目录里有图才给【可以发的图】）。
+         * 空串 = 这个能力不存在，生产行为和加它之前逐字一致。
+         */
+        actLines: String = "",
         /** 三条硬规则（他模型层那篇：情绪词≤1 / 感叹号≤1 / 连续附和≤2 轮）；空 = 不限 */
         hardRules: String = "",
     ): LlmPrompt {
@@ -208,6 +215,8 @@ class PromptBuilder(
                     // 想念挨着状态行：它改的是"怎么接"，不是"要不要开口"（那是需要）
                     "想念" to missingLines,
                     "应对" to moveLines,
+                    // 动作（引用/发图）放在"抽身"之前：它是怎么说话的一部分
+                    "动作" to actLines,
                     "抽身" to silenceLines,
                     "改口" to correctionLines,
                 ),

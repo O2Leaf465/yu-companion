@@ -109,6 +109,27 @@ class MemoryIndex(context: Context) {
         runCatching { f.appendText(encode(entry).toString() + "\n", Charsets.UTF_8) }
     }
 
+    /**
+     * 删掉某条消息的索引（删单条消息时用）。
+     *
+     * 不删的后果：被删掉的那句还留在索引里，如果它是承诺/里程碑（`pinned`），
+     * 整段事件会被永久钉住 —— 永不软遗忘、展开门槛降到 0.35。
+     * "删除"不等于"忘记"，用户看到的就是"我明明删了它还记得"。
+     */
+    fun remove(ts: Long) {
+        val f = file ?: return
+        if (!f.exists()) return
+        runCatching {
+            val keep = f.readLines(Charsets.UTF_8)
+                .filter { it.isNotBlank() }
+                .filter { line ->
+                    val e = runCatching { decode(JSONObject(line)) }.getOrNull()
+                    e == null || e.ts != ts
+                }
+            f.writeText(keep.joinToString("") { it + "\n" }, Charsets.UTF_8)
+        }
+    }
+
     fun read(): List<IndexEntry> {
         val f = file ?: return emptyList()
         if (!f.exists()) return emptyList()

@@ -40,6 +40,12 @@ object Notifier {
         val diag = java.io.File(context.filesDir, "notify.log")
         fun log(line: String) {
             runCatching {
+                // 滚动：这份文件只给诊断看，**不能无限长**
+                //（真机上已经 1400+ 行 / 47KB；recall.log 早就有 200 行滚动，只有这个没做）
+                if (diag.exists() && diag.length() > 64 * 1024) {
+                    val keep = diag.readLines(Charsets.UTF_8).takeLast(200)
+                    diag.writeText(keep.joinToString("") { it + "\n" }, Charsets.UTF_8)
+                }
                 diag.appendText("${System.currentTimeMillis()} $line\n", Charsets.UTF_8)
             }
         }

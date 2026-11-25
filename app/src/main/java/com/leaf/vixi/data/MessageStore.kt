@@ -119,12 +119,15 @@ class MessageStore(context: Context) {
         return o.optString("image").takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList()
     }
 
-    fun append(msg: StoredMessage) {
-        synchronized(lock) {
-            runCatching {
-                file.appendText(encode(msg).toString() + "\n", Charsets.UTF_8)
-            }
-        }
+    /**
+     * @return 是否真的落盘成功。**调用方必须看**：磁盘满 / IO 错时界面上"已发送"是假的，
+     *  重启之后这条消息就不存在了（以前这里 `runCatching` 把异常吞掉，没人知道）。
+     */
+    fun append(msg: StoredMessage): Boolean = synchronized(lock) {
+        runCatching {
+            file.appendText(encode(msg).toString() + "\n", Charsets.UTF_8)
+            true
+        }.getOrDefault(false)
     }
 
     /** 删掉一条（按时间戳 + 文本匹配），整文件重写 */
@@ -139,13 +142,19 @@ class MessageStore(context: Context) {
 
     private fun rewrite(messages: List<StoredMessage>) {
         runCatching {
-            val tmp = File(file.parentFile, "chat.jsonl.tmp")
+            // tmp 名按会话区分：固定叫 chat.jsonl.tmp 的话，两个会话同时整份重写会互相踩
+            val tmp = File(file.parentFile, file.name + ".tmp")
             tmp.bufferedWriter(Charsets.UTF_8).use { w ->
                 messages.forEach { w.write(encode(it).toString()); w.newLine() }
             }
-            // 先覆盖再删 tmp：不能"先删原文件、再 rename"——rename 一旦失败，整个聊天记录就没了
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
+            // **同目录 rename 是原子的**：目标要么是旧内容、要么是完整新内容。
+            // copyTo 是先 truncate 目标再逐块复制 —— 中途被杀或磁盘满，
+            // 留下的是一段"合法的前缀"，后面几天的对话永久消失，而且没有任何提示。
+            if (!tmp.renameTo(file)) {
+                // 少数文件系统不支持覆盖式 rename：退回复制（仍比直接往目标上写安全）
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
         }
     }
 

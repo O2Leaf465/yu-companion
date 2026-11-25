@@ -529,6 +529,16 @@ object TopicExporter {
     private fun sanitizeDate(ts: Long, stamp: DateTimeFormatter, zone: ZoneId): String =
         stamp.format(Instant.ofEpochMilli(ts).atZone(zone))
 
+    /**
+     * 导出目录名：`files/export/<这个名字>` 与 `文档/鱼/<这个名字>/` 都用它。
+     *
+     * ⚠️ **删除侧必须调同一个函数**。以前 `RecordArchive` 用自己那套
+     * （`[^A-Za-z0-9_-] → _`）算目录名，于是「鱼」算成 `__`、「群-群聊」算成 `______`，
+     * 和真实目录 `鱼` / `群-群聊` 对不上 —— 删会话时 `notes=0`，
+     * 整段对话以每 30 分钟一篇的 md 留在手机公共目录里，用户以为删干净了。
+     */
+    fun exportDirName(subDir: String): String = if (subDir.isBlank()) "" else sanitize(subDir).ifBlank { "_" }
+
     private fun sanitize(s: String): String =
         s.replace(Regex("[\\\\/:*?\"<>|#^\\[\\]]"), "")
             .replace(Regex("\\s+"), " ")

@@ -1311,6 +1311,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch(io) {
             store.delete(bubble.ts, bubble.text)
+            // 索引也要删：留着的话那句承诺仍把整段事件钉住（永不软遗忘、展开门槛 0.35），
+            // 表现就是"我明明删了它还记得"
+            indexStore.remove(bubble.ts)
             bubble.images.forEach { images.deleteImage(it) }
         }
     }
@@ -1579,7 +1582,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         viewModelScope.launch(io) {
-            store.append(
+            val ok = store.append(
                 StoredMessage(
                     fromUser = true,
                     text = msg.text,
@@ -1589,6 +1592,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     quote = msg.quote,
                 )
             )
+            // 落盘失败必须让人看见：否则界面上"已发送"，重启之后这条消息就不存在了
+            if (!ok) _state.update { it.copy(notice = "这条没写进记录（可能是存储满了）") }
         }
 
         pending += msg.copy(ts = bubble.ts)

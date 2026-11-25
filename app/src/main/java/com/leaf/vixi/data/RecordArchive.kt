@@ -298,7 +298,10 @@ object RecordArchive {
         deleteBackups: Boolean = true,
     ): Deleted {
         if (subDir.isBlank() || !validId(convId)) return Deleted(0, 0)
-        val dirName = sanitize(subDir)
+        // 目录名必须和导出时**同一个函数**算出来。
+        // 以前这里用 `[^A-Za-z0-9_-] → _`，于是「鱼」算成 `__`、「群-群聊」算成 `______`，
+        // 和真实目录 `鱼` / `群-群聊` 对不上 → 删会话时 notes=0，笔记全留在公共目录里。
+        val dirName = TopicExporter.exportDirName(subDir)
         val backupNames = if (deleteBackups) backupNamesOf(context.filesDir, convId) else emptyList()
 
         val files = deleteIn(context.filesDir, convId, deleteBackups)
@@ -307,7 +310,8 @@ object RecordArchive {
         privateDir.listFiles()?.forEach { f -> if (f.name != KEEP_ON_PURGE) runCatching { f.delete() } }
         runCatching { privateDir.delete() }
 
-        val notes = runCatching { TopicExporter.purgePublished(context, dirName) }.getOrDefault(0)
+        // 传**原始 subDir**：purgePublished 内部走同一套 sanitize，别在这里二次改写
+        val notes = runCatching { TopicExporter.purgePublished(context, subDir) }.getOrDefault(0)
         // 公共目录里的备份副本也是整段对话，说了"连备份一起删"就得真删
         backupNames.forEach { runCatching { TopicExporter.purgePublishedBackup(context, it) } }
         return Deleted(files, notes)

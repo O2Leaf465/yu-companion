@@ -61,7 +61,17 @@ class ConversationStore(context: Context) {
                     .put("createdAt", c.createdAt)
             )
         }
-        runCatching { file.writeText(arr.toString(), Charsets.UTF_8) }
+        // tmp + rename：写一半被杀会留下半截 JSON，而 all() 把它吞成空表
+        // → 所有会话标题/成员从界面消失；启动时 ensureSingleFor 又用 v1 重建，
+        // 撞上仍然存在的 chat_v1.jsonl，看起来就是"会话串了"。
+        runCatching {
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(arr.toString(), Charsets.UTF_8)
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
+        }
     }
 
     var currentId: String

@@ -73,7 +73,9 @@ object FactBlock {
     private fun one(o: JSONObject): Item? {
         val fact = o.optString("fact").trim()
         if (fact.isBlank() || fact == "null") return null
-        val who = o.optString("who").trim().ifBlank { null }
-        return Item(who, fact)
+        // 两个字段名都认：`subject` 是 2026-11-26 起的主用法（必填枚举，模型更听话），
+        // `who` 是老写法，别让旧数据/propmt 失效
+        val subject = o.optString("subject").trim().ifBlank { o.optString("who").trim() }
+        return Item(subject.ifBlank { null }, fact)
     }
 }

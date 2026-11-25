@@ -100,27 +100,53 @@ class FactStore(context: Context) {
      * 两段：先是她（每人一段），再是**他**（用户 2026-11-25 要求补上的那一半）。
      */
     fun block(charIds: List<String>, nameOf: (String) -> String, group: Boolean): String {
-        val mine = listUser()
-        val rows = charIds.mapNotNull { id ->
+        val hers = charIds.mapNotNull { id ->
             val facts = list(id)
             if (facts.isEmpty()) return@mapNotNull null
             val head = if (group) "${nameOf(id)}：" else ""
-            head to facts
+            head to facts.map { it.text }
         }
-        if (rows.isEmpty() && mine.isEmpty()) return ""
+        return renderBlock(group, hers, listUser().map { it.text })
+    }
 
-        return buildString {
-            if (rows.isNotEmpty()) {
-                appendLine("【关于" + (if (group) "她们" else "她") + "的事实（长期有效，不用问、不用复述出处）】")
-                rows.forEach { (head, facts) ->
-                    facts.takeLast(INJECT_MAX).forEach { appendLine("- " + head + it.text) }
+    companion object {
+        /** 每人上限：超过就不再写（避免提示词里挂一长串） */
+        const val MAX = 40
+
+        /** 注入时最多带几条（取最近的） */
+        const val INJECT_MAX = 20
+
+        /** "关于他"那一份的文件 key（`facts_user.jsonl`），不是某个角色 id */
+        const val USER_KEY = "user"
+
+        /**
+         * 拼这段注入文本（**纯函数**，单测直接调）。
+         *
+         * 拆出来的原因：这段是"她的事实 + 他的事实"两段规则，
+         * 以前只有端到端才能验，而端到端要发真消息、还要模型配合 ——
+         * 真机上就出现过"以为接上了、其实没进 prompt"。
+         *
+         * @param hers (头部前缀, 事条目) —— 群聊前缀是"名字：", 单聊为空
+         */
+        fun renderBlock(
+            group: Boolean,
+            hers: List<Pair<String, List<String>>>,
+            his: List<String>,
+        ): String {
+            if (hers.isEmpty() && his.isEmpty()) return ""
+            return buildString {
+                if (hers.isNotEmpty()) {
+                    appendLine("【关于" + (if (group) "她们" else "她") + "的事实（长期有效，不用问、不用复述出处）】")
+                    hers.forEach { (head, facts) ->
+                        facts.takeLast(INJECT_MAX).forEach { appendLine("- " + head + it) }
+                    }
                 }
+                if (his.isNotEmpty()) {
+                    appendLine("【关于他的事实（你记住的、他本人的事）】")
+                    his.takeLast(INJECT_MAX).forEach { appendLine("- " + it) }
+                }
+                append("（这些是已经确认过的设定；跟正文冲突时以这些为准。别把它们念出来。）")
             }
-            if (mine.isNotEmpty()) {
-                appendLine("【关于他的事实（你记住的、他本人的事）】")
-                mine.takeLast(INJECT_MAX).forEach { appendLine("- " + it.text) }
-            }
-            append("（这些是已经确认过的设定；跟正文冲突时以这些为准。别把它们念出来。）")
         }
     }
 
@@ -148,15 +174,4 @@ class FactStore(context: Context) {
     }
 
     private fun sanitize(s: String) = s.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "c1" }
-
-    companion object {
-        /** 每人上限：超过就不再写（避免提示词里挂一长串） */
-        const val MAX = 40
-
-        /** 注入时最多带几条（取最近的） */
-        const val INJECT_MAX = 20
-
-        /** "关于他"那一份的文件 key（`facts_user.jsonl`），不是某个角色 id */
-        const val USER_KEY = "user"
-    }
 }

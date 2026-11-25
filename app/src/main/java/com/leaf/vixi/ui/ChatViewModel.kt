@@ -1979,14 +1979,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // ⚠️ 示例里**绝不能写具体内容**：上一版写了 `{"fact":"喜欢草莓"}`，
             // 模型直接把"喜欢草莓"抄进 facts 文件（真机 23:54 抓到）。
             // 只给骨架，不给值。
+            // 两类的区别必须写清楚、并且给**必填的 subject**：
+            // 只写"关于他的事实就写 who"时，模型会把她的事全归到她自己（真机实测：
+            // facts_user.jsonl 一直不生成）。枚举比可选字段听话得多。
             appendLine(
-                "【事实字段】这条回复的**最后一行**固定写一个机器尾巴：" +
-                    "有关于你自己的稳定信息（喜好、习惯、经历、生日、怕的东西、家里情况）就写 " +
-                    "###FACT 加 JSON {\"fact\":\"那句话本身\"}；" +
-                    "有关于**他**的稳定信息（他的作息、工作、喜好、忌讳、生日）就写 " +
-                    "{\"who\":\"他\",\"fact\":\"那句话本身\"}；群聊记别人的写 \"who\":\"那个人名\"；" +
-                    "这一轮都没有就写 ###FACT null。每轮都要写。fact 只写一句话，" +
-                    "**不要照抄这里的示例文字**，临时情绪/当下的事都写 null。"
+                "【事实字段】这条回复的**最后一行**固定写一个机器尾巴，三选一：" +
+                    "① 有关于**她自己**的稳定信息 → ###FACT {\"subject\":\"她\",\"fact\":\"那句话\"}；" +
+                    "② 有关于**他**（也就是 Leaf、正在和你聊天的人）的稳定信息 —— 他的作息、工作、" +
+                    "喜好、忌讳、生日、家里的事 → ###FACT {\"subject\":\"他\",\"fact\":\"那句话\"}；" +
+                    "③ 都没有 → ###FACT null。每轮都要写。subject 只能是 她 / 他" +
+                    "（群聊可以写成员名）。fact 只写一句话，**不要照抄这里的示例文字**；" +
+                    "临时情绪、当下发生的事都不写。"
             )
             if (stickerNames.isNotEmpty()) {
                 appendLine(
@@ -2169,10 +2172,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val byName = membersOf(conv).associate { it.name to it.id }
             val fallbackId = conv.memberIds.firstOrNull()
             fb.items.forEach { item ->
-                // who 是他本人 → 记到"关于他"那一份（跨会话通用）；
-                // 否则按成员名归到某个角色；都没写就记给会话创建者
+                // subject 是必填枚举（她 / 他 / 群成员名），who 是兼容老写法。
+                // "他本人" → 记到 facts_user.jsonl（跨会话通用）；否则按成员名归到某个角色；
+                // 都没给就记给会话创建者。
                 val who = item.who?.trim()
-                if (who != null && who in USER_ALIASES) {
+                val isHis = who != null && (who in USER_ALIASES || who.startsWith("他"))
+                    // 兜底：模型没写 subject，但句子明显是在说他（"他喜欢吃辣"）
+                    || (who == null && LOOKS_LIKE_HIM.containsMatchIn(item.fact))
+                if (isHis) {
                     runCatching { com.leaf.vixi.App.instance.facts.addUser(item.fact, conv.id) }
                 } else {
                     val id = who?.let(byName::get) ?: fallbackId
@@ -2631,7 +2638,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
          * "他不吃香菜"这种关于用户的稳定信息时，要单独存在 `facts_user.jsonl`，
          * 跨会话通用（换角色聊天这件事仍然成立）。
          */
-        val USER_ALIASES = setOf("他", "她他", "你", "我", "Leaf", "leaf", "用户", "对方")
+        val USER_ALIASES = setOf("他", "你", "我", "Leaf", "leaf", "用户", "对方", "他本人")
+
+        /**
+         * 兜底：模型没给 subject、但这句话明显在说"他"。
+         * 只认开头几个词，避免把"他对我很好"这种关于她的评价也归过去。
+         */
+        val LOOKS_LIKE_HIM = Regex("^(他|你|Leaf|leaf)\\S{0,3}(是|喜欢|爱|讨厌|怕|不吃|吃|在|有|做|上|住|的)")
 
         /**
          * 合并窗口：**停手 2 秒**才发出去（把连着的几条合并成一次请求）。

@@ -27,7 +27,21 @@ class FactStore(context: Context) {
 
     data class Fact(val text: String, val at: Long)
 
+    /**
+     * 第二个主体：**他**（Leaf）的事实。
+     *
+     * 用户 2026-11-25 指出："长期事实只做了她的，没做我的"。
+     * 关于他的事实（作息、工作、喜欢什么、忌讳）跨会话通用，所以单独一份文件、
+     * 不按角色分 —— 换一个角色聊天，"他不吃香菜"这件事仍然成立。
+     */
     private fun fileOf(charId: String) = File(dir, "facts_${sanitize(charId)}.jsonl")
+
+    /** 关于他的事实 */
+    fun listUser(): List<Fact> = list(USER_KEY)
+
+    fun addUser(raw: String, convId: String? = null): Boolean = add(USER_KEY, raw, convId)
+
+    fun removeUser(text: String): Boolean = remove(USER_KEY, text)
 
     fun list(charId: String): List<Fact> = runCatching {
         val f = fileOf(charId)
@@ -82,19 +96,29 @@ class FactStore(context: Context) {
     /**
      * 注入用的一段话。**群聊要带名字**，否则"喜欢草莓"会变成整个群共有的设定。
      * 空表返回空串 —— 调用方据此不注入，行为与加这个功能之前一致。
+     *
+     * 两段：先是她（每人一段），再是**他**（用户 2026-11-25 要求补上的那一半）。
      */
     fun block(charIds: List<String>, nameOf: (String) -> String, group: Boolean): String {
+        val mine = listUser()
         val rows = charIds.mapNotNull { id ->
             val facts = list(id)
             if (facts.isEmpty()) return@mapNotNull null
             val head = if (group) "${nameOf(id)}：" else ""
             head to facts
         }
-        if (rows.isEmpty()) return ""
+        if (rows.isEmpty() && mine.isEmpty()) return ""
+
         return buildString {
-            appendLine("【关于" + (if (group) "她们" else "她") + "的事实（长期有效，不用问、不用复述出处）】")
-            rows.forEach { (head, facts) ->
-                facts.takeLast(INJECT_MAX).forEach { appendLine("- " + head + it.text) }
+            if (rows.isNotEmpty()) {
+                appendLine("【关于" + (if (group) "她们" else "她") + "的事实（长期有效，不用问、不用复述出处）】")
+                rows.forEach { (head, facts) ->
+                    facts.takeLast(INJECT_MAX).forEach { appendLine("- " + head + it.text) }
+                }
+            }
+            if (mine.isNotEmpty()) {
+                appendLine("【关于他的事实（你记住的、他本人的事）】")
+                mine.takeLast(INJECT_MAX).forEach { appendLine("- " + it.text) }
             }
             append("（这些是已经确认过的设定；跟正文冲突时以这些为准。别把它们念出来。）")
         }
@@ -131,5 +155,8 @@ class FactStore(context: Context) {
 
         /** 注入时最多带几条（取最近的） */
         const val INJECT_MAX = 20
+
+        /** "关于他"那一份的文件 key（`facts_user.jsonl`），不是某个角色 id */
+        const val USER_KEY = "user"
     }
 }

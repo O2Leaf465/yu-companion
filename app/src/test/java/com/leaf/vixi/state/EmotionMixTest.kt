@@ -15,10 +15,24 @@ class EmotionMixTest {
     private val hour = 3_600_000L
 
     @Test
-    fun `同一种情绪会累加`() {
+    fun `同一情绪反复出现会累积，但每次先把旧情绪打折`() {
         var raw = EmotionMix.add("", EmotionLabel.HURT, 0.3)
         raw = EmotionMix.add(raw, EmotionLabel.HURT, 0.2)
-        assertEquals(0.5, EmotionMix.decode(raw).first().w, 0.001)
+        // 0.3 × 0.8 + 0.2 = 0.44（2026-11-25 之前是纯累加的 0.5；
+        // 纯累加 + 等比衰减会让池子里的相对大小永远不变，混合看起来就是死的）
+        assertEquals(0.44, EmotionMix.decode(raw).first().w, 0.001)
+    }
+
+    @Test
+    fun `后来的情绪能把老情绪顶掉`() {
+        // 连受四次委屈（旧版：HURT 会一路累加到顶，别的情绪永远挤不进来）
+        var raw = ""
+        repeat(4) { raw = EmotionMix.add(raw, EmotionLabel.HURT, 0.9) }
+        assertEquals(EmotionLabel.HURT, EmotionMix.decode(raw).first().label)
+
+        // 接下来六句开心 —— 应该能反超（这就是"混合会变"的核心）
+        repeat(6) { raw = EmotionMix.add(raw, EmotionLabel.JOY, 0.9) }
+        assertEquals(EmotionLabel.JOY, EmotionMix.decode(raw).first().label)
     }
 
     @Test

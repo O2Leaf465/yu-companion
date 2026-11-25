@@ -123,7 +123,9 @@ fun SystemPromptScreen(
                 val factsByMember = remember(tick, state.conversationId, members) {
                     members.associate { it.id to factStore.list(it.id).map { f -> f.text } }
                 }
-                val total = factsByMember.values.sumOf { it.size }
+                // 关于**他**的事实（跨会话通用）：用户 2026-11-25 指出之前只做了她的
+                val hisFacts = remember(tick) { factStore.listUser().map { it.text } }
+                val total = factsByMember.values.sumOf { it.size } + hisFacts.size
 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
@@ -154,9 +156,28 @@ fun SystemPromptScreen(
                     ) {
                         if (total == 0) {
                             Text(
-                                text = "还没有。聊到她的喜好/经历时，她会自己记一条。",
+                                text = "还没有。聊到她的喜好/经历、或者你自己的事时，她会自己记一条。",
                                 color = VixiPalette.muted, fontSize = 10.5.sp,
                             )
+                        }
+                        // 先列"关于他"的：跨会话通用，最容易被忽略
+                        hisFacts.forEach { text ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "他：" + text,
+                                    color = VixiPalette.text.copy(alpha = 0.85f),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextAction(
+                                    label = "✕", color = VixiPalette.danger,
+                                    fontSize = 12.sp, horizontalPadding = 6,
+                                    onClick = {
+                                        factStore.removeUser(text)
+                                        tick++
+                                    },
+                                )
+                            }
                         }
                         members.forEach { m ->
                             (factsByMember[m.id] ?: emptyList()).forEach { text ->

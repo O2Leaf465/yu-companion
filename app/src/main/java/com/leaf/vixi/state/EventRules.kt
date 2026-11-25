@@ -520,7 +520,9 @@ object EventRules {
             // 混合情绪：这次的情绪加进池子（同标签累加，只留前二）
             emoMix = emotionLabel?.let { zh ->
                 com.leaf.vixi.state.EmotionLabel.entries.firstOrNull { it.zh == zh }
-                    ?.let { com.leaf.vixi.state.EmotionMix.add(state.emoMix, it, maxOf(0.30, abs(d.p) + abs(d.a))) }
+                    // 强度地板从 0.30 降到 0.10：0.30 会让"轻轻一句"和"被骂一句"一样重，
+                    // 混合池里就分不出主次（用户 2026-11-25："混合似乎没变"）
+                    ?.let { com.leaf.vixi.state.EmotionMix.add(state.emoMix, it, maxOf(0.10, abs(d.p) + abs(d.a))) }
                     ?: state.emoMix
             } ?: state.emoMix,
             lastLabel = emotionLabel ?: state.lastLabel,

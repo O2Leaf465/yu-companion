@@ -281,35 +281,13 @@ private fun StateCard(
 ) {
     Card(
         title = if (stateOn) "状态底座：开" else "状态底座：关",
+        // 标题行只留两个最常用的：_action 槽位很窄，塞 7 个按钮会把标题挤没
+        // （用户 2026-11-25 反馈"状态底座被改挤着了"）
         action = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (stateOn) {
                     TextAction(label = "改数值", horizontalPadding = 10, color = VixiPalette.accent, onClick = onEdit)
                 }
-                TextAction(
-                    label = if (snapshot?.learnOn == true) "学习:开" else "学习:关",
-                    horizontalPadding = 10,
-                    color = if (snapshot?.learnOn == true) VixiPalette.accent else VixiPalette.muted,
-                    onClick = onToggleLearn,
-                )
-                // 晚回 / 不回 分开两个开关（用户 2026-11-25 要求）。
-                // ⚠️ 这两个按钮以前只声明没渲染 —— 真机上根本点不到（"写了没接线"第 N 次）。
-                if (stateOn) {
-                    TextAction(
-                        label = if (snapshot?.delayOn == true) "晚回:开" else "晚回:关",
-                        horizontalPadding = 10,
-                        color = if (snapshot?.delayOn == true) VixiPalette.accent else VixiPalette.muted,
-                        onClick = onToggleDelay,
-                    )
-                    TextAction(
-                        label = if (snapshot?.silenceOn == true) "不回:开" else "不回:关",
-                        horizontalPadding = 10,
-                        color = if (snapshot?.silenceOn == true) VixiPalette.accent else VixiPalette.muted,
-                        onClick = onToggleSilence,
-                    )
-                }
-                TextAction(label = "重置", horizontalPadding = 10, onClick = onReset)
-                TextAction(label = "主动?", horizontalPadding = 10, onClick = onProactiveCheck)
                 TextAction(
                     label = if (stateOn) "开" else "关",
                     horizontalPadding = 10,
@@ -319,6 +297,38 @@ private fun StateCard(
             }
         },
     ) {
+        // 其余开关放到卡片里、单独一行**可横向滚动**：数量只会越来越多
+        if (stateOn) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextAction(
+                    label = if (snapshot?.learnOn == true) "学习:开" else "学习:关",
+                    horizontalPadding = 8,
+                    color = if (snapshot?.learnOn == true) VixiPalette.accent else VixiPalette.muted,
+                    onClick = onToggleLearn,
+                )
+                TextAction(
+                    label = if (snapshot?.delayOn == true) "晚回:开" else "晚回:关",
+                    horizontalPadding = 8,
+                    color = if (snapshot?.delayOn == true) VixiPalette.accent else VixiPalette.muted,
+                    onClick = onToggleDelay,
+                )
+                TextAction(
+                    label = if (snapshot?.silenceOn == true) "不回:开" else "不回:关",
+                    horizontalPadding = 8,
+                    color = if (snapshot?.silenceOn == true) VixiPalette.accent else VixiPalette.muted,
+                    onClick = onToggleSilence,
+                )
+                TextAction(label = "重置", horizontalPadding = 8, onClick = onReset)
+                TextAction(label = "主动?", horizontalPadding = 8, onClick = onProactiveCheck)
+            }
+        }
+
         val s = snapshot
         if (s == null) {
             Text("（状态未装载）", color = VixiPalette.muted, fontSize = 11.5.sp)
@@ -381,8 +391,15 @@ private fun StateCard(
                         "${(d.score * 100).toInt()}% " + (if (d.send) "会开口" else "不说") +
                             if (d.reason.isBlank()) "" else " · " + d.reason.take(26)
                     },
+                // 混合：显示**占比**（各标签权重归一），不是原始权重 ——
+                // 原始权重会超过 100%（池子上限 1.5），看着像算错
                 "混合" to com.leaf.vixi.state.EmotionMix.decode(s.emoMix)
-                    .joinToString("+") { "${it.label.zh}${(it.w * 100).toInt()}" }
+                    .let { pool ->
+                        val sum = pool.sumOf { it.w }
+                        if (sum <= 0.0) "" else pool.joinToString("+") {
+                            "${it.label.zh}${(it.w / sum * 100).toInt()}"
+                        }
+                    }
                     .ifBlank { "—" },
                 "应对" to (com.leaf.vixi.state.Strategy.decode(s.moves).last?.zh ?: "—"),
                 "旋钮" to com.leaf.vixi.state.Growth.encode(com.leaf.vixi.state.Growth.decode(s.knobs))

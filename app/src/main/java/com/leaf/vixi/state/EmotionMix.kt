@@ -40,18 +40,29 @@ object EmotionMix {
         list.filter { it.w >= MIN_WEIGHT }.take(MAX_KEEP)
             .joinToString(",") { "${it.label.zh}:${fmt(it.w)}" }
 
-    /** 加一份：同标签累加，其他不变；再裁到前二 */
+    /**
+     * 加一份：**先整体淡一点，再加这一份**（2026-11-25 修）。
+     *
+     * 以前是纯累加 + 整体等比衰减：同一个情绪只会越累越大，
+     * 而衰减对全池等比 → **相对大小永远不变**，次要情绪永远挤不进来，
+     * 调试页的「混合」看着就一直是同一个标签。
+     * 现在每来一句先把旧情绪打折，让"最近的情绪"真的有分量。
+     */
     fun add(raw: String, label: EmotionLabel, intensity: Double): String {
         if (intensity <= 0.0) return raw
-        val cur = decode(raw).toMutableList()
+        val cur = decode(raw).map { it.copy(w = it.w * ADD_FADE) }.toMutableList()
+        val i = intensity.coerceIn(0.05, 1.0)
         val idx = cur.indexOfFirst { it.label == label }
         if (idx >= 0) {
-            cur[idx] = cur[idx].copy(w = (cur[idx].w + intensity).coerceAtMost(1.5))
+            cur[idx] = cur[idx].copy(w = (cur[idx].w + i).coerceAtMost(1.5))
         } else {
-            cur += Pair(label, intensity.coerceAtMost(1.5))
+            cur += Pair(label, i)
         }
         return encode(cur.sortedByDescending { it.w })
     }
+
+    /** 每加一份时，旧情绪统一打这个折 */
+    private const val ADD_FADE = 0.80
 
     /** 时间衰减：池子按半衰期整体变淡（相对大小不变） */
     fun decay(raw: String, dtMs: Long): String {

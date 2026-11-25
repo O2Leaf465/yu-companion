@@ -1982,9 +1982,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             appendLine(
                 "【事实字段】这条回复的**最后一行**固定写一个机器尾巴：" +
                     "有关于你自己的稳定信息（喜好、习惯、经历、生日、怕的东西、家里情况）就写 " +
-                    "###FACT 加一个 JSON {\"fact\":\"那句话本身\"}，群聊再加 \"who\":\"说这句话的人\"；" +
-                    "这一轮没有就写 ###FACT null。每轮都要写。fact 只写一句话，" +
-                    "**不要照抄这里的示例文字**，临时情绪/当下的事/他的信息都写 null。"
+                    "###FACT 加 JSON {\"fact\":\"那句话本身\"}；" +
+                    "有关于**他**的稳定信息（他的作息、工作、喜好、忌讳、生日）就写 " +
+                    "{\"who\":\"他\",\"fact\":\"那句话本身\"}；群聊记别人的写 \"who\":\"那个人名\"；" +
+                    "这一轮都没有就写 ###FACT null。每轮都要写。fact 只写一句话，" +
+                    "**不要照抄这里的示例文字**，临时情绪/当下的事都写 null。"
             )
             if (stickerNames.isNotEmpty()) {
                 appendLine(
@@ -2167,8 +2169,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val byName = membersOf(conv).associate { it.name to it.id }
             val fallbackId = conv.memberIds.firstOrNull()
             fb.items.forEach { item ->
-                val id = item.who?.let(byName::get) ?: fallbackId
-                if (id != null) runCatching { com.leaf.vixi.App.instance.facts.add(id, item.fact, conv.id) }
+                // who 是他本人 → 记到"关于他"那一份（跨会话通用）；
+                // 否则按成员名归到某个角色；都没写就记给会话创建者
+                val who = item.who?.trim()
+                if (who != null && who in USER_ALIASES) {
+                    runCatching { com.leaf.vixi.App.instance.facts.addUser(item.fact, conv.id) }
+                } else {
+                    val id = who?.let(byName::get) ?: fallbackId
+                    if (id != null) {
+                        runCatching { com.leaf.vixi.App.instance.facts.add(id, item.fact, conv.id) }
+                    }
+                }
             }
         }
         // 通知里要能看出是谁说的（群里只写一句正文，会分不清哪个人）
@@ -2613,6 +2624,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
+        /**
+         * 事实尾巴里 `who` 写这些 = **关于他（Leaf）**，不是某个角色。
+         *
+         * 用户 2026-11-25："长期事实只做了她的没做我的" —— 模型判断出
+         * "他不吃香菜"这种关于用户的稳定信息时，要单独存在 `facts_user.jsonl`，
+         * 跨会话通用（换角色聊天这件事仍然成立）。
+         */
+        val USER_ALIASES = setOf("他", "她他", "你", "我", "Leaf", "leaf", "用户", "对方")
+
         /**
          * 合并窗口：**停手 2 秒**才发出去（把连着的几条合并成一次请求）。
          * 注意：这个值只影响"什么时候开始请求"，不影响气泡出现的时间（气泡立刻就显示）。

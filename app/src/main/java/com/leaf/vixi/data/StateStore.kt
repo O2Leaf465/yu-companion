@@ -88,6 +88,15 @@ data class VixiState(
     /** 抽身（不回）开关：默认开；关掉她就永远会回 */
     val silenceOn: Boolean = true,
 
+    /**
+     * 「晚点回」（DELAY）单独开关：默认**关**。
+     *
+     * 用户 2026-11-25 实测后要分开：不回（SILENT）可以留，但"隔 15 秒才回"在真机上
+     * 只会让人觉得 App 卡住了（有排队消息时不拖，但单发一条仍会静默 15 秒）。
+     * 默认关掉，想要那种"她慢半拍"的体感再去调试页打开。
+     */
+    val delayOn: Boolean = false,
+
     /** 上一轮的"缄口"动作（说/瞒/软化），只驱动提示行和暗流代价 */
     val withhold: String = "",
 
@@ -290,6 +299,7 @@ class StateStore(context: Context) {
         put("missing", s.missing)
         put("emoMix", s.emoMix)
         put("silenceOn", s.silenceOn)
+        put("delayOn", s.delayOn)
         put("withhold", s.withhold)
         put("moves", s.moves)
         put("learnOn", s.learnOn)
@@ -358,6 +368,8 @@ class StateStore(context: Context) {
             missing = o.optDouble("missing", 0.0).coerceIn(0.0, 1.0),
             emoMix = o.optString("emoMix", ""),
             silenceOn = o.optBoolean("silenceOn", true),
+            // 老状态文件里没有这个键 → 默认**关**（用户实测后要的：晚回像卡死）
+            delayOn = o.optBoolean("delayOn", false),
             withhold = o.optString("withhold", ""),
             moves = o.optString("moves", ""),
             learnOn = o.optBoolean("learnOn", false),

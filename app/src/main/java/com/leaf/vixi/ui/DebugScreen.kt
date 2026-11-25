@@ -168,6 +168,7 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
                     onReset = { vm.resetSelfState() },
                 onToggleLearn = { vm.toggleLearn() },
                 onToggleSilence = { vm.toggleSilence() },
+                onToggleDelay = { vm.toggleDelay() },
                 onProactiveCheck = { vm.proactiveCheck() },
                 onEdit = { editing = true },
                 )
@@ -275,6 +276,7 @@ private fun StateCard(
     onEdit: () -> Unit,
     onToggleLearn: () -> Unit,
     onToggleSilence: () -> Unit,
+    onToggleDelay: () -> Unit,
     onProactiveCheck: () -> Unit,
 ) {
     Card(
@@ -290,6 +292,22 @@ private fun StateCard(
                     color = if (snapshot?.learnOn == true) VixiPalette.accent else VixiPalette.muted,
                     onClick = onToggleLearn,
                 )
+                // 晚回 / 不回 分开两个开关（用户 2026-11-25 要求）。
+                // ⚠️ 这两个按钮以前只声明没渲染 —— 真机上根本点不到（"写了没接线"第 N 次）。
+                if (stateOn) {
+                    TextAction(
+                        label = if (snapshot?.delayOn == true) "晚回:开" else "晚回:关",
+                        horizontalPadding = 10,
+                        color = if (snapshot?.delayOn == true) VixiPalette.accent else VixiPalette.muted,
+                        onClick = onToggleDelay,
+                    )
+                    TextAction(
+                        label = if (snapshot?.silenceOn == true) "不回:开" else "不回:关",
+                        horizontalPadding = 10,
+                        color = if (snapshot?.silenceOn == true) VixiPalette.accent else VixiPalette.muted,
+                        onClick = onToggleSilence,
+                    )
+                }
                 TextAction(label = "重置", horizontalPadding = 10, onClick = onReset)
                 TextAction(label = "主动?", horizontalPadding = 10, onClick = onProactiveCheck)
                 TextAction(

@@ -798,7 +798,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val id = stateCharId() ?: return
         selfState = stateStore.update(id) { it.copy(silenceOn = !it.silenceOn) }
         refreshStateToUi()
-        _state.update { it.copy(notice = if (selfState.silenceOn) "抽身:开（她可以不回）" else "抽身:关（她一定回）") }
+        _state.update { it.copy(notice = if (selfState.silenceOn) "不回:开（她可以不回）" else "不回:关（她一定回）") }
+    }
+
+    /** 「晚点回」开关（用户 2026-11-25 要和"不回"分开控制） */
+    fun toggleDelay() {
+        val id = stateCharId() ?: return
+        selfState = stateStore.update(id) { it.copy(delayOn = !it.delayOn) }
+        refreshStateToUi()
+        _state.update { it.copy(notice = if (selfState.delayOn) "晚回:开（她可能晚 15 秒）" else "晚回:关（立刻回）") }
     }
 
     /** 学习开关（S5 入心）：默认关，调试页能点开 */
@@ -1968,10 +1976,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     "随便接话、打招呼、顺着聊都不要用；大多数回复里不该出现这个标签。" +
                     "用法：在这条回复**最前面**写 [引用:那句原文的前几个字]。"
             )
+            // ⚠️ 示例里**绝不能写具体内容**：上一版写了 `{"fact":"喜欢草莓"}`，
+            // 模型直接把"喜欢草莓"抄进 facts 文件（真机 23:54 抓到）。
+            // 只给骨架，不给值。
             appendLine(
-                "【可以记住】聊到**关于你自己的稳定信息**（喜好、习惯、经历、生日、" +
-                    "怕的东西、家里的情况）时，在回复末尾写 [记住:喜欢草莓] 这种短句。" +
-                    "只写一句、不超过 20 字；临时情绪、当下发生的事、他的信息都**不要**记。"
+                "【事实字段】这条回复的**最后一行**固定写一个机器尾巴：" +
+                    "有关于你自己的稳定信息（喜好、习惯、经历、生日、怕的东西、家里情况）就写 " +
+                    "###FACT 加一个 JSON {\"fact\":\"那句话本身\"}，群聊再加 \"who\":\"说这句话的人\"；" +
+                    "这一轮没有就写 ###FACT null。每轮都要写。fact 只写一句话，" +
+                    "**不要照抄这里的示例文字**，临时情绪/当下的事/他的信息都写 null。"
             )
             if (stickerNames.isNotEmpty()) {
                 appendLine(
@@ -2123,13 +2136,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         failedTurns.removeAll { t -> t.ids.any { it in bubbleIds } }
 
         // ── 切气泡：单聊一个人切条，群聊先按「名字：」认出说话人再切条 ──
-        // 一次调用里模型输出 1~3 句「名字：内容」，本地切不动就整体归会话创建者（见 GroupReplyParser）
+        // 先切掉**事实尾巴**（模型每轮最后一行给 `###FACT {...}` 或 `###FACT null`）：
+        // 它不属于"她说的话"，绝不能进气泡、落库、索引或通知。
+        val fb = com.leaf.vixi.llm.FactBlock.split(result.text)
         val spoken: List<Spoken> = if (conv.isGroup) {
-            GroupReplyParser.parse(result.text, groupNames, fallbackName(conv))
+            GroupReplyParser.parse(fb.body, groupNames, fallbackName(conv))
         } else {
-            ReplySplitter.split(result.text).map { Spoken(null, it) }
-        }
-        // 她这一句里可能夹带动作：`[引用:原文]` / `[图:文件名]`（本地剥，不额外调用）。
+            ReplySplitter.split(fb.body).map { Spoken(null, it) }
+        }        // 她这一句里可能夹带动作：`[引用:原文]` / `[图:文件名]`（本地剥，不额外调用）。
         // 剥完再往下走：气泡正文、通知、落库、索引都不该看到标签。
         // 引用要**节流**：模型太爱引（用户 2026-11-25 反馈"用得太频繁"）。
         // 最近 6 条里她已经引用过 → 这一轮直接丢掉引用（正文照旧），不用再问模型。
@@ -2146,16 +2160,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        // 她这一轮带出的事实：记到**说那句话的人**头上（群聊里不能都记给会话创建者）
-        if (acted.any { it.fact != null }) {
+        // 她这一轮带出的事实：来自**结构化尾巴**，按 who（群聊）/ 默认会话创建者归属。
+        // 这是用户 2026-11-25 定稿的形态：模型每轮都做一次判断并给字段，
+        // 不像正文标签那样容易被语气带走或漏写。
+        if (fb.items.isNotEmpty()) {
             val byName = membersOf(conv).associate { it.name to it.id }
             val fallbackId = conv.memberIds.firstOrNull()
-            acted.forEach { s ->
-                val f = s.fact ?: return@forEach
-                val id = s.speaker?.let(byName::get) ?: fallbackId
-                if (id != null) {
-                    runCatching { com.leaf.vixi.App.instance.facts.add(id, f, conv.id) }
-                }
+            fb.items.forEach { item ->
+                val id = item.who?.let(byName::get) ?: fallbackId
+                if (id != null) runCatching { com.leaf.vixi.App.instance.facts.add(id, item.fact, conv.id) }
             }
         }
         // 通知里要能看出是谁说的（群里只写一句正文，会分不清哪个人）

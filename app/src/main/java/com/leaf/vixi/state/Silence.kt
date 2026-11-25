@@ -61,6 +61,13 @@ object Silence {
      */
     fun decide(s: VixiState, hour: Int, roll: Double): Act {
         if (!s.enabled || !s.silenceOn) return Act.RESPOND
+        val act = pick(s, hour, roll)
+        // 「晚点回」有独立开关（用户 2026-11-25 要分开）：关掉就当成正常回，
+        // 但**不改权重表** —— 少掉的那部分概率直接并入"回"，别的档位比例不变
+        return if (act == Act.DELAY && !s.delayOn) Act.RESPOND else act
+    }
+
+    private fun pick(s: VixiState, hour: Int, roll: Double): Act {
         val w = weights(s, hour)
         val total = w.respond + w.delay + w.silent + w.endTopic
         if (total <= 0.0) return Act.RESPOND

@@ -158,9 +158,6 @@ class PromptBuilder(
             if (isGroup) {
                 appendLine("【群成员】" + members.joinToString("、"))
             }
-            // 长期事实放在最前面：它是最稳定的背景（变化极慢），
-            // 也是整段里最该"先读到"的东西。放在【已读】之前不会打乱前缀稳定性。
-            if (factLines.isNotBlank()) appendLine(factLines)
             appendLine("【已读】")
             if (recent.isEmpty()) {
                 appendLine("（还没有聊过）")
@@ -226,6 +223,10 @@ class PromptBuilder(
                     "应对" to moveLines,
                     // 动作（引用/发图）放在"抽身"之前：它是怎么说话的一部分
                     "动作" to actLines,
+                    // 长期事实：**必须放在动态段**。它虽然变化慢，但一旦写入一条，
+                    // 后面【已读】整段（长话题里占这轮 prompt 的绝大部分）就全部缓存未命中。
+                    // 放在这里牺牲一点"先读到"的顺序，换缓存前缀的稳定（2026-11-25 审查发现）。
+                    "事实" to factLines,
                     "抽身" to silenceLines,
                     "改口" to correctionLines,
                 ),

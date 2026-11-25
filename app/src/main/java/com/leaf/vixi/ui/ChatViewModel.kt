@@ -159,14 +159,6 @@ data class ChatUiState(
     val notice: String? = null,
     /** 测试环境：不记忆、不归档、不检索，用独立聊天文件 */
     val sandbox: Boolean = false,
-    /**
-     * 下一轮要不要让她联网（手动单轮开关，发完自动关）。
-     *
-     * 为什么不常开：联网走服务端工具 `deepseek_web_search`，官方要求
-     * **model 必须是 deepseek-flash 且服务端会忽略 temperature** ——
-     * 常开等于把人设温度扔掉，她会"变正经"。
-     */
-    val searchNext: Boolean = false,
     /** 当前会话：标题栏显示、切会话重载都看这三个 */
     val conversationId: String = "",
     val conversationTitle: String = "鱼",
@@ -1219,13 +1211,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     /** 下一轮让她联网（发完自动关）。用的是服务端搜索工具，不额外调用。 */
     fun toggleSearchNext() {
-        val next = !_state.value.searchNext
-        _state.update {
-            it.copy(
-                searchNext = next,
-                notice = if (next) "下一轮她会联网查一下（发完自动关）" else "下一轮不联网",
-            )
-        }
+        // 联网现在**默认开、由模型自己判断要不要搜**（用户 2026-11-25 定），
+        // 这个开关和它的 UI 已经移除；保留空实现只为不破坏旧调用点。
     }
 
     fun toggleSandbox() {
@@ -1988,7 +1975,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             )
             if (stickerNames.isNotEmpty()) {
                 appendLine(
-                    "【可以发的图】" + stickerNames.take(12).joinToString("、") +
+                    "【可以发的图】" + stickerNames.take(20).joinToString("、") +
                         "（想发就单独占一行写 [图:文件名]，那一行不要再写别的话；不合适就不发）"
                 )
             }
@@ -2094,9 +2081,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         )
 
         val startedAt = SystemClock.elapsedRealtime()
-        // 联网是**单轮开关**：这一轮用掉就关（服务端工具会忽略 temperature，不该常开）
-        val doSearch = _state.value.searchNext
-        if (doSearch) _state.update { it.copy(searchNext = false) }
+        // 联网**默认开**、由模型自己决定搜不搜（用户 2026-11-25 定）。
+        // 官方约束：不能强制联网，`tool_choice` 指定它会 400，所以"搜不搜"完全交给它。
+        val doSearch = true
         var recallInfo = ""
         if (recallQuery.isNotBlank() && recallQuery != "旧检索（索引未就绪）") {
             recallInfo = "检索「${recallQuery.take(24)}」→ 命中 ${retrieved.size} 条"
@@ -2149,6 +2136,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val quotedRecently = _state.value.bubbles.takeLast(6).any { b -> !b.self && b.quote != null }
         val acted: List<Spoken> = com.leaf.vixi.llm.HerActParser.enrichAll(spoken)
             .map { if (quotedRecently) it.copy(quote = null) else it }
+            // 标签常常**独占一行**（[记住:…]、[图:…] 都被要求单独写），剥完就是空串。
+            // 不过滤就会冒出一个空白气泡，还落库进历史（之后每轮【已读】多一行空的「鱼：」）。
+            .filterNot { it.text.isBlank() && it.image == null && it.quote == null }
+        if (acted.isEmpty()) {
+            // 整轮都是标签（比如只写了一句 [记住:…]）→ 这一轮没有话可说，别留空壳
+            failedTurns.removeAll { t -> t.ids.any { it in bubbleIds } }
+            _state.update { it.copy(typing = false, notice = "这一轮她没说话") }
+            return
+        }
 
         // 她这一轮带出的事实：记到**说那句话的人**头上（群聊里不能都记给会话创建者）
         if (acted.any { it.fact != null }) {
@@ -2614,7 +2610,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         const val MAX_DEFER_MS = 30_000L
 
         /** 一轮请求的硬上限：超过就按超时失败，绝不让 typing 一直亮着 */
-        const val TURN_TIMEOUT_MS = 100_000L
+        // ⚠️ 必须**大于** LlmClient 里联网那档的单次超时（150s），
+        // 否则外层先抛，内层的加时永远无效（2026-11-25 审查发现）
+        const val TURN_TIMEOUT_MS = 170_000L
         const val REQUEST_LOG_MAX = 12
 
         /** 最多保留几条纠正记录 */

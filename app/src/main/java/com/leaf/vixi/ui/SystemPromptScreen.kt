@@ -144,7 +144,10 @@ fun SystemPromptScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp)
+                            // 上限压到 140dp：横屏可用高度约 330dp，200dp 会把下面
+                            // weight(1f) 的提示词框挤成 0（App 没锁方向，2026-11-25 审查发现）。
+                            // 不用 fillMaxHeight(比例)：这里在 verticalScroll 里，高度约束是无界的。
+                            .heightIn(max = 140.dp)
                             .padding(horizontal = 12.dp)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp),

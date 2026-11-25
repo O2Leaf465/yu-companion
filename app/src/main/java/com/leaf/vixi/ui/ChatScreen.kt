@@ -281,8 +281,6 @@ fun ChatScreen(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
-                searchNext = state.searchNext,
-                onToggleSearch = vm::toggleSearchNext,
                 quoting = state.quoting,
                 onCancelQuote = vm::cancelQuote,
                 pendingImages = state.pendingImages,
@@ -827,9 +825,6 @@ private fun InputBar(
     onFocus: () -> Unit,
     onSend: () -> Unit,
     onPickImage: () -> Unit,
-    /** 下一轮让她联网（单轮开关，发完自动关） */
-    searchNext: Boolean = false,
-    onToggleSearch: () -> Unit = {},
     quoting: Bubble?,
     onCancelQuote: () -> Unit,
     pendingImages: List<String>,
@@ -848,23 +843,6 @@ private fun InputBar(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(if (searchNext) VixiPalette.accent else VixiPalette.her)
-                    .clickableNoIndication { onToggleSearch() },
-                contentAlignment = Alignment.Center,
-            ) {
-                // 联网：亮起来 = 下一轮她会真的去查
-                Text(
-                    text = "🔍",
-                    fontSize = 16.sp,
-                    color = if (searchNext) VixiPalette.ink else VixiPalette.muted,
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-
             Box(
                 modifier = Modifier
                     .size(38.dp)

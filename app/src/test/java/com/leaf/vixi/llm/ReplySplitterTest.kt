@@ -19,7 +19,8 @@ class ReplySplitterTest {
         val out = ReplySplitter.split(raw)
         assertEquals(5, out.size)
         assertEquals("第四句", out[3])
-        assertEquals("第五句第六句", out[4])
+        // 用**空格**连：直接拼会变成「第五句第六句」，读起来像一句话
+        assertEquals("第五句 第六句", out[4])
     }
 
     @Test
@@ -37,7 +38,7 @@ class ReplySplitterTest {
         val raw = (1..5).joinToString("\n") { "第${it}句" }
         val out = ReplySplitter.split(raw, maxBubbles = 2)
         assertEquals(2, out.size)
-        assertEquals("第2句第3句第4句第5句", out[1])
+        assertEquals("第2句 第3句 第4句 第5句", out[1])
     }
 
     @Test

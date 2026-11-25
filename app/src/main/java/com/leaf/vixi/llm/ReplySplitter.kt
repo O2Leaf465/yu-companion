@@ -55,8 +55,9 @@ object ReplySplitter {
         val head = chunks.take(maxBubbles - 1).toMutableList()
         val rest = chunks.drop(maxBubbles - 1)
         if (rest.isNotEmpty()) {
-            // 超出的并进最后一条，而不是丢掉她说的话
-            head += rest.joinToString("")
+            // 超出的并进最后一条，而不是丢掉她说的话。
+            // **用空格连**：直接 joinToString("") 会把「我在」「刚洗完澡」粘成「我在刚洗完澡」。
+            head += rest.joinToString(" ")
         }
 
         return head.ifEmpty { listOf("……") }

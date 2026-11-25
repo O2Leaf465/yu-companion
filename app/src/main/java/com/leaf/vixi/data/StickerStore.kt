@@ -59,7 +59,12 @@ class StickerStore(context: Context) {
      */
     fun addFromUri(uri: android.net.Uri, displayName: String? = null): String? = runCatching {
         val resolver = ctx.contentResolver
-        val name = baseName(displayName) ?: ("贴纸_" + System.currentTimeMillis() % 100000)
+        // 名字优先用相册里的真实文件名（"猫猫点头.jpg" 比 "贴纸_12345" 有用得多）
+        val fromGallery = displayName ?: runCatching {
+            resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+        val name = baseName(fromGallery) ?: ("贴纸_" + System.currentTimeMillis())
         val bmp = resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
             ?: return null
         val longest = maxOf(bmp.width, bmp.height)
@@ -72,7 +77,13 @@ class StickerStore(context: Context) {
             bmp
         }
         stickersDir.mkdirs()
-        val out = File(stickersDir, "$name.jpg")
+        // 重名就加序号，**绝不覆盖已有贴纸**（outputStream() 会直接截断目标）
+        var out = File(stickersDir, "$name.jpg")
+        var i = 2
+        while (out.exists() && i < 100) {
+            out = File(stickersDir, "${name}_$i.jpg")
+            i++
+        }
         out.outputStream().use { scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it) }
         out.name
     }.getOrNull()
@@ -88,7 +99,8 @@ class StickerStore(context: Context) {
         if (!src.exists()) return false
         val ext = src.extension.ifBlank { "jpg" }
         val dst = File(stickersDir, "$base.$ext")
-        if (dst.exists()) return false
+        // **同名的"改名"其实是保存一下没改**：dst == src 不算冲突，否则点保存永远报错
+        if (dst.absolutePath != src.absolutePath && dst.exists()) return false
         src.renameTo(dst)
     }.getOrDefault(false)
 

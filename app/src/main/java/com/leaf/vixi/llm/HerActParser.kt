@@ -19,7 +19,9 @@ package com.leaf.vixi.llm
 object HerActParser {
 
     private val QUOTE = Regex("\\[引用[:：]\\s*([^\\]]{1,80})]")
-    private val IMAGE = Regex("\\[图[:：]\\s*([^\\]\\s]{1,80})]")
+    // 文件名**允许空格**：相册导入的图可能叫「熊猫 无语.jpg」，而提示词列的是真实文件名，
+    // 模型照抄回来的标签必须能认出来（`StickerStore.materialize` 会再校验一次，放宽没有风险）
+    private val IMAGE = Regex("\\[图[:：]\\s*([^\\]]{1,80})]")
     private val FACT = Regex("\\[记住[:：]\\s*([^\\]]{1,60})]")
 
     /** 只剥标签，不判断图片是否存在（那件事交给调用方：它才知道贴纸目录里有什么） */

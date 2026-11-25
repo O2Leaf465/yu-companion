@@ -67,9 +67,17 @@ class LlmClient(private val settings: SettingsStore) {
      *  · 不单独计费，但搜索结果会进上下文按 token 算
      */
     suspend fun chat(prompt: LlmPrompt, webSearch: Boolean = false): LlmResult = withContext(Dispatchers.IO) {
-        val first = call(
-            prompt.user, prompt.system, prompt.maxTokens, prompt.images, webSearch = webSearch,
-        )
+        val first = try {
+            call(prompt.user, prompt.system, prompt.maxTokens, prompt.images, webSearch = webSearch)
+        } catch (e: LlmException) {
+            // 联网**默认开**，但中转/自建网关不一定认 `deepseek_web_search`（会 400）。
+            // 那种情况下退一步"不联网也要能聊"，否则整个 App 直接不可用。
+            if (webSearch && looksLikeToolRejection(e.message)) {
+                call(prompt.user, prompt.system, prompt.maxTokens, prompt.images, webSearch = false)
+            } else {
+                throw e
+            }
+        }
         if (first.text.isNotBlank()) return@withContext first
 
         // 搜索路径不重试：命中 content_filter 时空 content 是审核拒绝，重试只会多花钱
@@ -133,6 +141,12 @@ class LlmClient(private val settings: SettingsStore) {
             .replace(Regex("[\\s,，、。;；]+"), " ")
             .trim()
             .take(40)
+    }
+
+    private fun looksLikeToolRejection(message: String?): Boolean {
+        val m = message ?: return false
+        return m.contains("HTTP 400") || m.contains("tool", ignoreCase = true) ||
+            m.contains("tools", ignoreCase = true) || m.contains("web_search", ignoreCase = true)
     }
 
     private suspend fun call(
@@ -217,6 +231,13 @@ class LlmClient(private val settings: SettingsStore) {
         val msg = choice.optJSONObject("message")
         val text = msg?.optString("content").orEmpty()
         val usage = json.optJSONObject("usage")
+
+        // 被内容审核拦下时 HTTP 仍是 200、content 是空字符串（官方 web tools 文档）。
+        // 不读 finish_reason 的话，这一轮会被当成"她只回了省略号"落库进历史（2026-11-25 审查发现）。
+        val finish = choice.optString("finish_reason")
+        if (text.isBlank() && finish == "content_filter") {
+            throw LlmException("她这句话被内容审核拦了（这轮没说出来，换个说法再试）")
+        }
 
         val promptTokens = usage?.optInt("prompt_tokens") ?: 0
         val completionTokens = usage?.optInt("completion_tokens") ?: 0

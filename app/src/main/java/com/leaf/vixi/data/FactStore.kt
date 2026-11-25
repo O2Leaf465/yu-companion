@@ -106,12 +106,21 @@ class FactStore(context: Context) {
         return t
     }
 
-    /** 互相包含 + 去掉"她/你"之后的相似，都算同一条 */
+    /**
+     * 互相包含 + 去掉"她/你"之后的相似，都算同一条。
+     *
+     * ⚠️ **但"喜不喜欢"必须分得清**（2026-11-25 审查发现）：单纯用包含判断的话，
+     * 「不喜欢草莓」包含「喜欢草莓」→ 被当成重复丢掉，反义永远写不进去，
+     * 提示词里就一直留着旧说法。所以包含判定还要**否定词数量相同**。
+     */
     private fun same(a: String, b: String): Boolean {
-        val x = a.replace("她", "").replace("你", "").replace(" ", "")
-        val y = b.replace("她", "").replace("你", "").replace(" ", "")
+        fun norm(s: String) = s.replace("她", "").replace("你", "").replace(" ", "")
+        fun negs(s: String) = s.count { it in "不没别勿无非" }
+        val x = norm(a)
+        val y = norm(b)
         if (x.isEmpty() || y.isEmpty()) return a == b
-        return x.contains(y) || y.contains(x)
+        if (x == y) return true
+        return (x.contains(y) || y.contains(x)) && negs(x) == negs(y)
     }
 
     private fun sanitize(s: String) = s.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "c1" }

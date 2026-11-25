@@ -114,6 +114,17 @@ object GroupReplyParser {
     private data class Head(val name: String?, val body: String)
 
     private fun splitName(line: String, members: List<String>): Head {
+        // ⚠️ 行首是**动作标签**时先放行（2026-11-25 审查发现）：
+        // `[引用:海苔说的对] 我也这么觉得` 会被下面的括号解析当成「名字前缀」，
+        // 候选「引用:海苔说的对」模糊命中成员「海苔」→ 整条标签被吃掉，
+        // 既丢了引用，还把这一泡（以及它上面的 [记住:]）记到海苔头上。
+        val head = line.trimStart()
+        if (head.startsWith("[引用") || head.startsWith("【引用") ||
+            head.startsWith("[图") || head.startsWith("【图") ||
+            head.startsWith("[记住") || head.startsWith("【记住")
+        ) {
+            return Head(null, line)
+        }
         bracketHead.find(line)?.let { m ->
             val who = matchMember(m.groupValues[1], members)
             if (who != null) {

@@ -7,6 +7,12 @@
 
 22,000+ 行 Kotlin · 415 条单元测试全绿 · 在 vivo V2329A（Android 15）上日常使用中
 
+| 聊天 | 调试页（情绪数值） | 她能发的图 |
+|---|---|---|
+| ![聊天](docs/shots/01-chat.png) | ![调试](docs/shots/02-debug.png) | ![贴纸](docs/shots/03-stickers.png) |
+
+---
+
 ---
 
 ## 她和普通 AI 聊天框的区别
@@ -116,6 +122,19 @@ RecallTest 38 · AppraisalTest 36 · SpeakingTest 34 · NeedsTest 32 · EventRul
 其中几条是专门给"改了却没接线"上的锁（这个项目真踩过）：
 `PromptBuilderTest` 断言每个注入块真的进了 prompt、`FactBlockRenderTest` 断言"关于他的事实"
 那一段会被拼出来、`PromptTextTest` 断言改了默认文案模板不会漏键。
+
+## 参考与致谢
+
+这套东西不是凭空想出来的，两个公开思路给了骨架：
+
+- **【BioCore】** —— 小黑盒 **@JOHNHIM**
+  四层结构（生物层 / 模型层 / 记忆层 / 交叉层）和"闭环上必须带断点"这个提法来自这套设计。
+  本项目按这个框架把四层各做了一遍，交叉层那几条边（记忆→状态、她的话→状态、状态→身份）也是照着切的。
+- **【Obsidian 记忆可视化】** —— 小黑盒 **@XRH66**
+  "把记忆点导出成带双链的笔记 + 一张 canvas 记忆地图"的做法来自这里。
+  `data/TopicExporter.kt` 里的 frontmatter、线索/前后文双链、`_记忆地图.canvas` 都受它启发。
+
+其余工程细节（缓存前缀纪律、一轮一次调用）来自我自己在 QQAgent 上的踩坑记录。
 
 ## 免责
 

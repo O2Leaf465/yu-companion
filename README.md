@@ -7,7 +7,7 @@
 
 22,000+ 行 Kotlin · 415 条单元测试全绿 · 在 vivo V2329A（Android 15）上日常使用中
 
-仓库：**https://github.com/O2Leaf465/yu-compaion**
+仓库：**https://github.com/O2Leaf465/yu-companion**
 
 | 聊天 | 调试页（情绪数值） | 她能发的图 |
 |---|---|---|

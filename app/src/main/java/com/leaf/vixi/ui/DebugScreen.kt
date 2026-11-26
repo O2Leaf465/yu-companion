@@ -56,6 +56,8 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
     var showInjection by remember { mutableStateOf(false) }
     // 【想念】【想要什么】【说多少】这些文案单独一个弹窗（用户 2026-11-25 要求可改）
     var showInjectionText by remember { mutableStateOf(false) }
+    // user 段的固定标签 / 说明句（2026-11-26 用户要求可改）
+    var showPromptText by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     var editing by remember { mutableStateOf(false) }
     var showRaw by remember { mutableStateOf(false) }
@@ -115,7 +117,21 @@ fun DebugScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPrompts: () -> Unit
                     ToolChip("请求记录", VixiPalette.accent, onOpenPrompts)
                     ToolChip("注入标签", VixiPalette.accent) { showInjection = true }
                     ToolChip("注入文案", VixiPalette.accent) { showInjectionText = true }
+                    ToolChip("提示词文案", VixiPalette.accent) { showPromptText = true }
                     ToolChip("主动测试", VixiPalette.accent) { vm.proactiveTest() }
+
+                    if (showPromptText) {
+                        // user 段的固定标签与说明句（【已读】【可以引用】【事实字段】…）
+                        InjectionDialog(
+                            initial = com.leaf.vixi.App.instance.promptText.raw(),
+                            title = "提示词文案（user 段）",
+                            hint = "一行一个 键=文案；删掉某行回默认，值留空 = 这一行不发。\n" +
+                                "{names} {example} {list} 是占位符，改文案时别删。",
+                            onSave = { text -> com.leaf.vixi.App.instance.promptText.save(text) },
+                            onReset = { com.leaf.vixi.App.instance.promptText.reset() },
+                            onClose = { showPromptText = false },
+                        )
+                    }
 
                     if (showInjection) {
                         // AlertDialog 是独立窗口，放在 Row 里也能正常弹

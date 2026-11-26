@@ -39,6 +39,10 @@ class App : Application() {
     lateinit var systemOverride: com.leaf.vixi.data.SystemOverride
         private set
 
+    /** user 段文案表（`files/prompt_text.md`）：【已读】【可以引用】【事实字段】这些标签 */
+    lateinit var promptText: com.leaf.vixi.data.PromptText
+        private set
+
     /** 是否在前台：决定她的回复要不要发通知 */
     @Volatile
     var isForeground: Boolean = false
@@ -63,6 +67,8 @@ class App : Application() {
         stickers = com.leaf.vixi.data.StickerStore(this)
         facts = com.leaf.vixi.data.FactStore(this)
         systemOverride = com.leaf.vixi.data.SystemOverride(this)
+        promptText = com.leaf.vixi.data.PromptText(this)
+        runCatching { promptText.bind() }
         runCatching { migrateSingleCharacter() }
         Notifier.ensureChannel(this)
     }

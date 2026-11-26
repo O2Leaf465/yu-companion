@@ -181,7 +181,7 @@ object Explain {
                     },
                 )
             } else {
-                appendLine("【说多少】这一轮可以多说，把憋着的一次说清楚（分几条也行）。")
+                appendLine(com.leaf.vixi.data.PromptText.text("act.vent"))
             }
             // 缄口（X2）：这一轮选择"瞒/软化"时只给做法
             val act = Withhold.Act.entries.firstOrNull { it.zh == s.withhold }
@@ -324,7 +324,7 @@ object Explain {
      */
     fun lengthLine(s: VixiState, now: Long = System.currentTimeMillis()): String {
         if (s.enabled && isVenting(s)) {
-            return "【说多少】这一轮可以多说，把憋着的一次说清楚（分几条也行）。"
+            return com.leaf.vixi.data.PromptText.text("act.vent")
         }
         if (!s.enabled) return ""
         val budget = speakBudget(s, now)

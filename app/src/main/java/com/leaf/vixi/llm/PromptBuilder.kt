@@ -154,13 +154,15 @@ class PromptBuilder(
         // 缓存前缀从那里开始直接归零。所以顺序是
         //     已读（只追加，前缀稳定）→ 新消息 → 更早（每 10 轮才变）→ 纠正 → 现在
         // 摘要以前放在最前面，每 10 轮重写一次，等于每 10 轮把整段缓存打掉一次。
+        // user 段的**固定标签与说明句**都从 PromptText 取（2026-11-26 用户要求可改）。
+        // 没建 `files/prompt_text.md` 时取到的是内置默认 —— 和抽取之前逐字一致。
         val user = buildString {
             if (isGroup) {
-                appendLine("【群成员】" + members.joinToString("、"))
+                appendLine(com.leaf.vixi.data.PromptText.text("seg.members") + members.joinToString("、"))
             }
-            appendLine("【已读】")
+            appendLine(com.leaf.vixi.data.PromptText.text("seg.read"))
             if (recent.isEmpty()) {
-                appendLine("（还没有聊过）")
+                appendLine(com.leaf.vixi.data.PromptText.text("seg.empty"))
             } else {
                 recent.forEach { t ->
                     // 动作事件不是"说的话"，不加说话人前缀，避免模型以为这是用户的原话
@@ -172,7 +174,7 @@ class PromptBuilder(
                 }
             }
 
-            appendLine("【新消息】")
+            appendLine(com.leaf.vixi.data.PromptText.text("seg.new"))
             incoming.forEach { m ->
                 if (m.kind == MsgKind.ACTION) appendLine(m.rendered)
                 else appendLine("Leaf：" + m.rendered)
@@ -182,14 +184,14 @@ class PromptBuilder(
             // 刻意不再注入「上一个话题」和「更早摘要」：前者一般用不上、占 token；
             // 后者是模型自己压的二手话，容易漂移。旧事一律让她自己检索原文。
             if (retrieved.isNotEmpty()) {
-                appendLine("【你想起的旧事】")
+                appendLine(com.leaf.vixi.data.PromptText.text("seg.recall"))
                 retrieved.forEach { appendLine("- $it") }
-                appendLine("（更早的原文片段，可能不完整；跟他最新的说法冲突时以他为准。")
-                appendLine("就当是你自己想起来的，别说「我查了记录」，也别否认聊过。）")
+                val hint = com.leaf.vixi.data.PromptText.text("seg.recallHint")
+                if (hint.isNotBlank()) appendLine(hint)
             }
 
             if (corrections.isNotEmpty()) {
-                appendLine("【他纠正过你（以他最新说法为准，别再搞错）】")
+                appendLine(com.leaf.vixi.data.PromptText.text("seg.corrections"))
                 corrections.takeLast(3).forEach { appendLine("- $it") }
             }
 
@@ -197,11 +199,11 @@ class PromptBuilder(
             if (isGroup) {
                 val names = members.joinToString("、")
                 val example = (members.firstOrNull() ?: "鱼") + "：随便"
-                appendLine("【输出格式（群聊）】每条消息以成员名开头，写成「名字：内容」，例如「$example」。")
+                appendLine(com.leaf.vixi.data.PromptText.fill("seg.group1", "example" to example))
                 // 真机上踩过的坑：人设里自称「海苔」，模型就回「海苔：…」，本地切不出气泡。
                 // 所以这里把可用名字写死，并明确"自称不算"。
-                appendLine("可用名字只有：$names。即使角色设定里自称别的名字，这里也必须用这个名字。")
-                appendLine("不必每个人都说话，1~3 个人开口就够；可以互相接话、回应上面那句。不要编新名字。")
+                appendLine(com.leaf.vixi.data.PromptText.fill("seg.group2", "names" to names))
+                appendLine(com.leaf.vixi.data.PromptText.text("seg.group3"))
             }
 
             // 此刻状态：一行人话（数值翻译来的），放在最靠后的动态段里。
@@ -238,7 +240,7 @@ class PromptBuilder(
                 )),
             )
             if (lastText.isNotBlank()) appendLine(lastText)
-            append("【现在】").appendLine(momentLine)
+            append(com.leaf.vixi.data.PromptText.text("seg.now")).appendLine(momentLine)
         }
 
         // 群聊一轮里最多 3 个人各说 1~2 句，180 token 容易被截在半句上，

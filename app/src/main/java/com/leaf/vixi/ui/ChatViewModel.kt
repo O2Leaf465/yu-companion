@@ -2055,47 +2055,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         //（空目录 = 没这个能力）。
         val stickerNames = runCatching { stickers.names() }.getOrDefault(emptyList())
         val actLines = buildString {
-            appendLine(
-                "【可以引用】**只在需要指回他刚说的某句具体内容时才用**（他答应过什么、" +
-                    "他说错了一句、他问的是你之前说过的某一小句）。" +
-                    "随便接话、打招呼、顺着聊都不要用；大多数回复里不该出现这个标签。" +
-                    "用法：在这条回复**最前面**写 [引用:那句原文的前几个字]。"
-            )
-            // ⚠️ 示例里**绝不能写具体内容**：上一版写了 `{"fact":"喜欢草莓"}`，
-            // 模型直接把"喜欢草莓"抄进 facts 文件（真机 23:54 抓到）。
-            // 只给骨架，不给值。
-            // 两类的区别必须写清楚、并且给**必填的 subject**：
-            // 只写"关于他的事实就写 who"时，模型会把她的事全归到她自己（真机实测：
-            // facts_user.jsonl 一直不生成）。枚举比可选字段听话得多。
-            appendLine(
-                "【事实字段】这条回复的**最后一行**固定写一个机器尾巴，三选一：" +
-                    "① 有关于**她自己**的稳定信息 → ###FACT {\"subject\":\"她\",\"fact\":\"那句话\"}；" +
-                    "② 有关于**他**（也就是 Leaf、正在和你聊天的人）的稳定信息 —— 他的作息、工作、" +
-                    "喜好、忌讳、生日、家里的事 → ###FACT {\"subject\":\"他\",\"fact\":\"那句话\"}；" +
-                    "③ 都没有 → ###FACT null。每轮都要写。subject 只能是 她 / 他" +
-                    "（群聊可以写成员名）。fact 只写一句话，**不要照抄这里的示例文字**；" +
-                    "临时情绪、当下发生的事都不写。"
-            )
+            // 这几段的文案都在 `files/prompt_text.md` 里可改（键：act.quote / act.fact / …）
+            appendLine(com.leaf.vixi.data.PromptText.text("act.quote"))
+            appendLine(com.leaf.vixi.data.PromptText.text("act.fact"))
             if (stickerNames.isNotEmpty()) {
                 appendLine(
-                    "【可以发的图】" + stickerNames.take(20).joinToString("、") +
-                        "（想发就单独占一行写 [图:文件名]，那一行不要再写别的话；不合适就不发）"
+                    com.leaf.vixi.data.PromptText.fill(
+                        "act.image",
+                        "list" to stickerNames.take(20).joinToString("、"),
+                    )
                 )
             }
             if (lookAttached) {
                 // 参考图是**随这一轮**发过去的，所以要明说"图就是你自己"
-                appendLine(
-                    "【你的样子】他问到了你的形象。这一轮随消息附了一张图，那就是你现在的样子：" +
-                        "按图里的样子说（发型、穿着、神态），别编、也别说「我看不到自己」。"
-                )
+                appendLine(com.leaf.vixi.data.PromptText.text("act.look"))
             }
             if (digged) {
                 // 主动回忆：旧事是她自己想起来的，语气要像「忽然想起来」，不像「被问出来的」
-                appendLine(
-                    "【忽然想起】这一轮你脑子里忽然冒出一件旧事（见【你想起的旧事】）。" +
-                        "它不是你被问出来的：用「对了…」「我想起来…」这种口气顺带带出来，" +
-                        "别反过来问他「你还记得吗」，也别硬拐回那件事。"
-                )
+                appendLine(com.leaf.vixi.data.PromptText.text("act.dig"))
             }
         }.trim()
         val rendered = com.leaf.vixi.data.ReactionTable.Rendered::class.let {

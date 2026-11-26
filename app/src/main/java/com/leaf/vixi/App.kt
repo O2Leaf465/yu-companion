@@ -43,6 +43,15 @@ class App : Application() {
     @Volatile
     var isForeground: Boolean = false
 
+    /**
+     * 后台主动开口写完一条之后回调（2026-11-26）。
+     *
+     * 前台时 Worker 不再整轮跳过，而是写盘后调这个，让 ChatViewModel 重读一次，
+     * 气泡立刻出现 —— 否则就是"落盘了但界面上没有"，要等切会话才冒出来。
+     */
+    @Volatile
+    var onProactiveLanded: (() -> Unit)? = null
+
     override fun onCreate() {
         super.onCreate()
         instance = this

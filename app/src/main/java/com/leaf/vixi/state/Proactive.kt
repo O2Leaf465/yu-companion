@@ -58,6 +58,15 @@ object Proactive {
     /** 被拒：上次主动她开了口，你没回 —— 再开口的意愿减半（自尊，不是惩罚用户） */
     const val REJECT_FACTOR = 0.5
 
+    /**
+     * 被拒惩罚的**有效期**：24 小时。
+     *
+     * 以前是永久的（`lastReplied=false` 一直挂着，直到你哪天真回了一句），
+     * 结果一次没被回就把她锁死；再叠上调试页「主动测试」也会写成"没被回"，
+     * 真机上直接变成"永远不会主动开口"（2026-11-26 排查）。
+     */
+    const val REJECT_TTL_MS = 24L * 60 * 60 * 1000
+
     /** 安静时段（23:00–8:00）的时段分：不是 0，只是很不想说话（0.3） */
     const val QUIET_FACTOR = 0.3
 
@@ -168,7 +177,9 @@ object Proactive {
         // 冷却：3 小时内已经主动过，减半。**只看时间差**，不看是否被回 ——
         // "刚说完又来说"和"上次说完没人理"是两种不同的抑制，各自有自己的系数。
         val cooled = history.lastSentAt > 0L && now - history.lastSentAt < COOLDOWN_MS
-        val rejected = history.lastSentAt > 0L && !history.lastReplied
+        // 被拒：只在 24 小时内算（以前是永久的 —— 一次没被回就把她锁死）
+        val rejected = history.lastSentAt > 0L && !history.lastReplied &&
+            now - history.lastSentAt < REJECT_TTL_MS
 
         var score = base
         if (cooled) score *= COOLDOWN_FACTOR

@@ -60,17 +60,13 @@ class ProactiveWorker(
     private suspend fun runOnce(app: Context, force: Boolean = false) {
         val now = System.currentTimeMillis()
 
-        // ⓪ App 正在前台就什么都不做。
-        //    两个原因：一是"主动开口"是后台行为的替代品，用户就在聊天页时她该正常回话，
-        //    不需要后台插一句；二是更硬的原因 —— 前台界面是 ChatViewModel 的内存副本，
-        //    我们往 jsonl 里追加一条它**不会重新读**，于是消息"落盘了但界面上没有"，
-        //    要等用户切会话/重启才冒出来（比不发更奇怪）。
-        // force = 调试页「主动测试」：跳过前台门（就地跑一次，落盘 + 通知）
+        // ⓪ **前台不再整轮跳过**（2026-11-26 用户问："难道在前台就不能主动开口了吗？"）。
+        //
+        // 原来的理由：前台界面是 ChatViewModel 的内存副本，往 jsonl 追加一条它不会重读，
+        // 于是"落盘了但界面上没有"，要等切会话才冒出来。
+        // 现在有 `ChatViewModel.reloadIfChanged()` 了：写盘后通知它重读一次就行。
+        // 前台时**不发通知**（人就在看屏幕，弹通知反而吵），只在聊天里多一条气泡。
         val fg = runCatching { com.leaf.vixi.App.instance.isForeground }.getOrDefault(false)
-        if (fg && !force) {
-            ProactiveLog.append(app, "skip: App 在前台")
-            return
-        }
 
         val settings = SettingsStore(app)
 
@@ -165,12 +161,32 @@ class ProactiveWorker(
         }
 
         // ⑨ 记冷却起点 + 把当前会话切到她（通知点开就落在刚写进去的那条上）
-        records.save(Proactive.History(lastSentAt = ts, lastReplied = false))
+        //
+        // ⚠️ **force（调试页「主动测试」）不记账**（2026-11-26 定位到的大坑）：
+        // 以前测试也写 `lastSentAt + lastReplied=false`，于是每次测试都会
+        //   · 让接下来 3 小时的分数被 ×0.5（冷却）
+        //   · 并且因为"测试消息没人回"，再叠一个 ×0.5（被拒）
+        // 连按两三次之后，自然触发要的真实分数被 ×0.25 压死 ——
+        // 真机日志里 17:48 那次 base 0.94 被压到 0.24 就是这个原因。
+        if (!force) {
+            records.save(Proactive.History(lastSentAt = ts, lastReplied = false))
+        }
         conversations.currentId = target.id
 
-        // ⑩ 通知（没权限就只是没弹一下，消息已经在聊天记录里了）
-        val posted = ProactiveNotifications.notify(app, character.name, line)
-        ProactiveLog.append(app, "sent ${character.name}@${target.id} notify=$posted 「${line.take(40)}」")
+        // ⑩ 通知（前台不发：人就在屏幕前；没权限就只是没弹一下，消息已经落盘）
+        val posted = if (fg) {
+            // 前台：让界面自己重读一次，气泡立刻出现（不用等切会话）
+            runCatching { com.leaf.vixi.App.instance.onProactiveLanded?.invoke() }
+            false
+        } else {
+            ProactiveNotifications.notify(app, character.name, line)
+        }
+        ProactiveLog.append(
+            app,
+            "sent ${character.name}@${target.id} notify=$posted fg=$fg" +
+                (if (force) " [force·不记冷却/被拒]" else "") +
+                " 「${line.take(40)}」",
+        )
     }
 
     /**

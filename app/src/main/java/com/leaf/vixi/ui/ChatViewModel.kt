@@ -282,6 +282,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         store.setSandbox(settings.sandbox)
         _state.update { it.copy(sandbox = settings.sandbox) }
         viewModelScope.launch { loadConversation(conv, replace = false) }
+
+        // 后台主动开口写完一条 → 让界面重读一次。
+        // 前台也能立刻看到（2026-11-26 用户问："难道在前台就不能主动开口了吗？"）
+        com.leaf.vixi.App.instance.onProactiveLanded = { reloadIfChanged() }
     }
 
     // ────────────────────────── 会话切换 / 新建 ──────────────────────────
@@ -897,6 +901,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // 先掐协程再关 io：反过来的话，正在 withContext(io) 的一轮会撞上"线程池已关"
         sendDebounceJob?.cancel()
         turnJob?.cancel()
+        // 别把已经销毁的 VM 留在 App 的全局回调里
+        runCatching {
+            if (com.leaf.vixi.App.instance.onProactiveLanded != null) {
+                com.leaf.vixi.App.instance.onProactiveLanded = null
+            }
+        }
         runCatching { io.close() }
         super.onCleared()
     }

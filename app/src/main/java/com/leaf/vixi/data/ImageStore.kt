@@ -87,6 +87,29 @@ class ImageStore(private val context: Context) {
 
     fun hasAvatar(which: String): Boolean = avatarFile(which).let { it.exists() && it.length() > 0 }
 
+    // ---------- 形象参考图（2026-11-26 用户要求）----------
+    //
+    // 一张"她长什么样"的参考图，按角色 id 存一份。
+    // 问到形象时把这张图**发给模型**（走已有的 images 通道），她就能照着自己描述，
+    // 而不是瞎编、也不会说"我看不到自己"。
+
+    fun refImageFile(which: String): File = File(avatarDir, "ref_$which.jpg")
+
+    fun hasRefImage(which: String): Boolean =
+        refImageFile(which).let { it.exists() && it.length() > 0 }
+
+    /** 存形象参考图：最长边 768（描述用，不需要原图分辨率，但太糊也认不出） */
+    fun saveRefImage(uri: Uri, which: String): Boolean = runCatching {
+        val bitmap = decode(uri, 768) ?: return false
+        FileOutputStream(refImageFile(which)).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        bitmap.recycle()
+        true
+    }.getOrDefault(false)
+
+    fun deleteRefImage(which: String): Boolean = runCatching {
+        refImageFile(which).takeIf { it.exists() }?.delete() ?: false
+    }.getOrDefault(false)
+
     fun saveAvatar(uri: Uri, which: String): Boolean = runCatching {
         val bitmap = decode(uri, 256) ?: return false
         FileOutputStream(avatarFile(which)).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }

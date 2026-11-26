@@ -585,13 +585,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         |  不分析原因、不讲道理、不承诺保密。
     """.trimMargin()
 
-    private fun systemBlock(): String {
+    /**
+     * system 的**正文**（人设 + 格式约定，或被 `files/system_override.md` 整段替换）。
+     *
+     * 四条边界**不在这里** —— 它们永远追加在最后，不可编辑。
+     */
+    private fun systemBase(): String {
+        val override = runCatching { com.leaf.vixi.App.instance.systemOverride.raw() }.getOrNull()
+        if (override != null) return override.trim()
+
         val rules = persona.rulesText
-        if (!conv.isGroup) return personaOf(conv) + "\n\n" + rules + "\n\n" + BOUNDARY_BLOCK
+        if (!conv.isGroup) return personaOf(conv) + "\n\n" + rules
+
         val blocks = membersOf(conv).joinToString("\n\n") { c ->
             "【角色：${c.name}】\n" + c.persona.ifBlank { characters.defaultPersona() }
         }
-        return (blocks + "\n\n" + rules + "\n\n" + BOUNDARY_BLOCK).trim()
+        return (blocks + "\n\n" + rules).trim()
+    }
+
+    /** 给「编辑系统提示词」弹窗用：可编辑的那一段（不含四条边界） */
+    fun systemBaseText(): String = systemBase()
+
+    private fun systemBlock(): String {
+        // 用户 2026-11-26 要求 system 可编辑：正文可以被整段替换，
+        // **四条边界永远追加在最后**（安全阀，不随编辑失效）。
+        return systemBase() + "\n\n" + BOUNDARY_BLOCK
     }
 
     /**
@@ -1758,6 +1776,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val effective = batch.map { m -> m.copy(images = m.images.filter { it in okNames }) }
         val imagePayload = encoded.map { Base64.encodeToString(it.second, Base64.NO_WRAP) }
 
+        // 形象参考图（用户 2026-11-26 要求）：问到"你长什么样"时，把她的参考图一起发过去。
+        // 为什么不每轮都发：每轮多一张图 = 每轮多花视觉 token，而 99% 的对话用不上。
+        val refId = conv.memberIds.firstOrNull()
+        // 这里还没有 incomingText（它在下面检索段才算），所以自己拼一份判断用
+        val turnText = batch.joinToString(" ") { it.text }
+        val askingLook = !conv.isGroup && LOOKS_LIKE_LOOK_QUESTION.containsMatchIn(turnText)
+        val refB64 = if (askingLook && refId != null && images.hasRefImage(refId)) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    java.io.FileInputStream(images.refImageFile(refId)).use {
+                        Base64.encodeToString(it.readBytes(), Base64.NO_WRAP)
+                    }
+                }.getOrNull()
+            }
+        } else {
+            null
+        }
+        val lookAttached = refB64 != null
+
         if (requestedImages.size > encoded.size) {
             val missing = requestedImages.size - encoded.size
             _state.update {
@@ -1783,6 +1820,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // 判定明细单独一个变量：以前和 recallQuery 共用，于是 `gate=0.57 …` 这种诊断串
         // 被当成"查询"写进了 recall.log 和调试页（日志里一半是重复行、查不到真实查询）
         var recallDiag = ""
+        /** 这一轮的旧事是**她自己想起来的**（主动回忆），不是他问出来的 */
+        var digged = false
         var retrieved: List<String> = emptyList()
         var recallRounds: List<String> = emptyList()
         var recallAugmented: List<String> = emptyList()
@@ -1834,9 +1873,45 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     excludeAfter = turnStart,
                     speakerName = { m -> if (m.fromUser) "Leaf" else nameOf(m.speakerId) },
                 )
+
                 retrieved = res.lines
                 recallQuery = incomingText
                 recallDiag = res.detail
+
+                // ── 主动回忆（2026-11-26 用户要求）──
+                // 闸门（`RecallMode.OFF`）只管"他这句话是不是在问旧事"。但真人也常常
+                // 自己忽然想起点什么 ——「对了，你上次说…」。所以闸门没开时，按概率再翻一次：
+                // 用**最近这段对话**当查询（而不是他那句话，因为那句话本来就没线索）。
+                // 条件收紧到：单聊 / 非沙盒 / 关系没裂 / 掷中概率，避免每轮乱翻旧账。
+                if (retrieved.isEmpty() &&
+                    res.mode == com.leaf.vixi.memory.RecallMode.OFF &&
+                    !conv.isGroup && selfState.conflict < 0.40 &&
+                    kotlin.random.Random.nextDouble() < PROACTIVE_RECALL_CHANCE
+                ) {
+                    val dig = runCatching {
+                        Recall.run(
+                            query = windowText.takeLast(120),
+                            corpus = corpus,
+                            entries = entries,
+                            mood = selfState.mood,
+                            unclosed = unclosed,
+                            knownNames = membersOf(conv).map { it.name },
+                            recentText = windowText,
+                            recalls = recallStats,
+                            coBonus = emptyMap(),
+                            excludeAfter = turnStart,
+                            speakerName = { m -> if (m.fromUser) "Leaf" else nameOf(m.speakerId) },
+                        )
+                    }.getOrNull()
+                    if (dig != null && dig.lines.isNotEmpty()) {
+                        retrieved = dig.lines
+                        digged = true
+                        recallQuery = windowText.takeLast(40)
+                        recallDiag = "主动回忆 · " + dig.detail
+                        logRecall(recallQuery, retrieved, recallDiag, dig.debug)
+                    }
+                }
+
                 recallRounds = listOf("gate=${String.format(java.util.Locale.US, "%.2f", res.gate)} ${res.mode.name}")
                 // 把判定明细与候选落盘：真机上"为什么没命中"只能靠这个复查
                 logRecall(incomingText, res.lines, res.detail, res.debug)
@@ -1997,6 +2072,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         "（想发就单独占一行写 [图:文件名]，那一行不要再写别的话；不合适就不发）"
                 )
             }
+            if (lookAttached) {
+                // 参考图是**随这一轮**发过去的，所以要明说"图就是你自己"
+                appendLine(
+                    "【你的样子】他问到了你的形象。这一轮随消息附了一张图，那就是你现在的样子：" +
+                        "按图里的样子说（发型、穿着、神态），别编、也别说「我看不到自己」。"
+                )
+            }
+            if (digged) {
+                // 主动回忆：旧事是她自己想起来的，语气要像「忽然想起来」，不像「被问出来的」
+                appendLine(
+                    "【忽然想起】这一轮你脑子里忽然冒出一件旧事（见【你想起的旧事】）。" +
+                        "它不是你被问出来的：用「对了…」「我想起来…」这种口气顺带带出来，" +
+                        "别反过来问他「你还记得吗」，也别硬拐回那件事。"
+                )
+            }
         }.trim()
         val rendered = com.leaf.vixi.data.ReactionTable.Rendered::class.let {
             runCatching {
@@ -2076,7 +2166,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             momentLine = momentLine(),
             // 测试环境不注入纠正记录：那是长期记忆的一部分
             corrections = if (settings.sandbox) emptyList() else correctionsCache,
-            images = imagePayload,
+            images = imagePayload + listOfNotNull(refB64),
             retrieved = retrieved,
             selfName = fallbackName(conv),
             members = groupNames,
@@ -2639,6 +2729,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
          * 跨会话通用（换角色聊天这件事仍然成立）。
          */
         val USER_ALIASES = setOf("他", "你", "我", "Leaf", "leaf", "用户", "对方", "他本人")
+
+        /**
+         * 「主动回忆」的触发概率（2026-11-26 用户要求）。
+         *
+         * 只在闸门没开（`RecallMode.OFF`）的轮次掷一次，所以实际频率 ≈ 0.15 × 普通聊天轮次。
+         * 高了会变成"每聊两句就翻旧账"，低了等于没有。
+         */
+        const val PROACTIVE_RECALL_CHANCE = 0.15
+
+        /** 问到"她长什么样"的问句特征（命中就把形象参考图随这一轮发过去） */
+        val LOOKS_LIKE_LOOK_QUESTION = Regex(
+            "长什么样|什么样子|长相|样子|照片|自拍|看看你|你长|头发|眼睛|身高|穿的|穿什么|打扮"
+        )
 
         /**
          * 兜底：模型没给 subject、但这句话明显在说"他"。

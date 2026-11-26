@@ -35,6 +35,10 @@ class App : Application() {
     lateinit var facts: com.leaf.vixi.data.FactStore
         private set
 
+    /** system 正文的可编辑覆盖（`files/system_override.md`）；四条边界不在这里 */
+    lateinit var systemOverride: com.leaf.vixi.data.SystemOverride
+        private set
+
     /** 是否在前台：决定她的回复要不要发通知 */
     @Volatile
     var isForeground: Boolean = false
@@ -49,6 +53,7 @@ class App : Application() {
         conversations = ConversationStore(this)
         stickers = com.leaf.vixi.data.StickerStore(this)
         facts = com.leaf.vixi.data.FactStore(this)
+        systemOverride = com.leaf.vixi.data.SystemOverride(this)
         runCatching { migrateSingleCharacter() }
         Notifier.ensureChannel(this)
     }

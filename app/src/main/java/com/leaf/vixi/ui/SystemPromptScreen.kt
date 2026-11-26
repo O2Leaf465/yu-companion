@@ -56,6 +56,21 @@ fun SystemPromptScreen(
     // 人设改过之后这一页要跟着变：state.characters 变化会触发重组
     val system = remember(state.characters, state.conversationId) { vm.systemPreview() }
     val members = state.members
+    // system 正文可编辑（2026-11-26 用户要求）：四条边界不在这里、永远追加在最后
+    var showEdit by remember { mutableStateOf(false) }
+
+    if (showEdit) {
+        InjectionDialog(
+            initial = vm.systemBaseText(),
+            title = "编辑 system 正文",
+            hint = "这一段就是 system 的正文（人设 + 格式约定）。\n" +
+                "四条边界（不诊断 / 不宣称意识 / 不替代真实关系 / 危机先安全）不在可改范围，" +
+                "保存后仍会自动接在最后。\n「还原内置」= 删掉覆盖、回到默认拼法。",
+            onSave = { text -> App.instance.systemOverride.save(text); showEdit = false },
+            onReset = { App.instance.systemOverride.reset(); showEdit = false },
+            onClose = { showEdit = false },
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(VixiPalette.ink)) {
         Column(
@@ -110,6 +125,15 @@ fun SystemPromptScreen(
                     fontSize = 11.sp,
                     horizontalPadding = 4,
                     onClick = onEditRules,
+                )
+                // 整段 system 正文可改（2026-11-26）：放这一行而不是标题行 ——
+                // 标题行挤不下（试过，「编辑」直接没渲染出来），这里空间够。
+                TextAction(
+                    label = "编辑 system 正文 ›",
+                    color = VixiPalette.accent,
+                    fontSize = 11.sp,
+                    horizontalPadding = 4,
+                    onClick = { showEdit = true },
                 )
             }
 

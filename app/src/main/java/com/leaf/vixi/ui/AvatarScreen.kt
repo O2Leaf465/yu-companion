@@ -65,6 +65,20 @@ fun AvatarScreen(vm: ChatViewModel, onBack: () -> Unit) {
         }
     }
 
+    // 形象参考图（2026-11-26 用户要求）：不裁剪、直接缩到 768 存一份。
+    // 问到"你长什么样"时这张图会随那一轮发给模型，她照着描述，而不是瞎编。
+    var refFor by remember { mutableStateOf<String?>(null) }
+    val refPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val id = refFor
+        refFor = null
+        if (uri == null || id == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { store.saveRefImage(uri, id) }
+            status = if (ok) "形象参考图已存下" else "这张图读不出来"
+            tick++
+        }
+    }
+
     val uri = cropUri
     val which = cropFor
     if (uri != null && which != null) {
@@ -147,6 +161,49 @@ fun AvatarScreen(vm: ChatViewModel, onBack: () -> Unit) {
                             status = "已清除「${c.name}」的头像"
                         },
                     )
+
+                    // 形象参考图：她"长什么样"的那张底图
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(VixiPalette.her)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "「${c.name}」的形象参考图",
+                                color = VixiPalette.text, fontSize = 12.5.sp,
+                            )
+                            Text(
+                                if (store.hasRefImage(c.id)) "已存 · 问到形象时会随那轮发给她看"
+                                else "没存 · 没存的话她会瞎编自己的样子",
+                                color = VixiPalette.muted, fontSize = 10.sp,
+                            )
+                        }
+                        TextAction(
+                            label = if (store.hasRefImage(c.id)) "换图" else "选图",
+                            color = VixiPalette.accent, fontSize = 12.sp, horizontalPadding = 8,
+                            onClick = {
+                                refFor = c.id
+                                refPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                        )
+                        if (store.hasRefImage(c.id)) {
+                            TextAction(
+                                label = "删除", color = VixiPalette.danger, fontSize = 12.sp,
+                                horizontalPadding = 8,
+                                onClick = {
+                                    store.deleteRefImage(c.id)
+                                    tick++
+                                    status = "已删除「${c.name}」的形象参考图"
+                                },
+                            )
+                        }
+                    }
                 }
 
                 status?.let { Text(it, color = VixiPalette.accent, fontSize = 12.sp) }
